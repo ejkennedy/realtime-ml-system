@@ -6,11 +6,14 @@ build-backend = "hatchling.build"
 name = "streaming"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
+# apache-flink is excluded from local deps: PyFlink's apache-beam dep requires
+# pyarrow<12 which conflicts with the rest of the workspace (>=16).
+# PyFlink runs inside the Docker container (fraud-flink:1.19 image) which has
+# its own isolated Python environment. For local type-checking, use the stubs below.
 dependencies = [
-    "apache-flink==1.19.0",
     "confluent-kafka>=2.4,<3.0",
     "pydantic>=2.7",
-    "redis>=5.0",
+    "redis>=4.2.2",
     "pyarrow>=16.0,<18.0",
     "python-dotenv>=1.0",
     "structlog>=24.0",
@@ -18,6 +21,12 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+
+# Note: apache-flink==1.19.0 is NOT listed here because its transitive
+# dependency (apache-beam) requires pyarrow<12, which conflicts with
+# the workspace-wide pyarrow>=16. PyFlink is installed directly in the
+# Docker image (fraud-flink:1.19) via pip, outside the uv workspace.
+# See infra/docker/flink/Dockerfile for the Docker install.
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/streaming"]
