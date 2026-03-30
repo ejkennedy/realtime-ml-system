@@ -1,5 +1,3 @@
-version: "3.9"
-
 networks:
   fraud-net:
     driver: bridge
@@ -203,7 +201,6 @@ services:
     build:
       context: ./flink
     image: fraud-flink:1.19
-    container_name: flink-taskmanager
     depends_on:
       flink-jobmanager:
         condition: service_healthy
@@ -244,7 +241,6 @@ services:
     ports:
       - "8265:8265"   # Ray dashboard
       - "8000:8000"   # Ray Serve HTTP endpoint
-      - "6379:6379"   # Ray GCS (internal, conflicts with Redis — using 6380 externally)
     environment:
       RAY_HEAD: "true"
       REDIS_HOST: redis
