@@ -3,6 +3,31 @@ name = "realtime-ml-system"
 version = "0.1.0"
 description = "Real-Time ML System — Streaming Inference with sub-50ms p95 latency"
 requires-python = ">=3.12,<3.13"
+# Dev/scripts dependencies — the actual service deps live in each services/ member
+dependencies = [
+    "xgboost>=2.1",
+    "scikit-learn>=1.5",
+    "onnxruntime>=1.18",
+    "onnxmltools>=1.12",
+    "skl2onnx>=1.17",
+    "mlflow>=2.14",
+    "ray[serve]>=2.32",
+    "feast[redis]>=0.40",
+    "evidently>=0.4",
+    "locust>=2.29",
+    "confluent-kafka>=2.4",
+    "numpy>=1.26,<2.0",
+    "pandas>=2.2",
+    "pyarrow>=16.0,<18.0",
+    "structlog>=24.0",
+    "httpx>=0.27",
+    "click>=8.1",
+    "python-dotenv>=1.0",
+    "prometheus-client>=0.20",
+    "redis>=4.2.2",
+    "pydantic>=2.7",
+    "matplotlib>=3.9",
+]
 
 [tool.uv]
 constraint-dependencies = [
