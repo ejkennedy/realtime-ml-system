@@ -1,10 +1,9 @@
 FROM flink:1.19.1-scala_2.12-java11
 
-# Install Python 3.12
+# Install Python 3 + pip (python3.12 not in Jammy default repos; python3.11 is fine for PyFlink)
 RUN apt-get update && apt-get install -y \
-    python3.12 python3.12-dev python3-pip curl \
+    python3 python3-dev python3-pip curl \
     && rm -rf /var/lib/apt/lists/* \
-    && ln -sf /usr/bin/python3.12 /usr/bin/python3 \
     && ln -sf /usr/bin/python3 /usr/bin/python
 
 # Set Flink Python environment
