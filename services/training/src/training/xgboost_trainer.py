@@ -64,7 +64,7 @@ class XGBoostTrainer:
         model_name: str = "fraud-detector",
         output_dir: str = "./models/registry",
     ) -> None:
-        mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI", "http://localhost:5000"))
+        mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI", "http://localhost:5001"))
         mlflow.set_experiment(experiment_name)
         self._model_name = model_name
         self._output_dir = Path(output_dir)
@@ -97,6 +97,7 @@ class XGBoostTrainer:
                 eval_set=[(X_val, y_val)],
                 verbose=50,
             )
+            model._estimator_type = "classifier"
 
             val_preds = model.predict_proba(X_val)[:, 1]
             val_metrics = {

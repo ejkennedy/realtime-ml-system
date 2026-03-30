@@ -1,8 +1,13 @@
 """Flink exactly-once checkpointing configuration."""
 
-from pyflink.common import Duration
-from pyflink.datastream import CheckpointingMode, StreamExecutionEnvironment
-from pyflink.datastream.checkpointing import ExternalizedCheckpointCleanup
+from datetime import timedelta
+
+from pyflink.common import RestartStrategies
+from pyflink.datastream import (
+    CheckpointingMode,
+    ExternalizedCheckpointCleanup,
+    StreamExecutionEnvironment,
+)
 from pyflink.datastream.state_backend import EmbeddedRocksDBStateBackend
 
 
@@ -28,8 +33,11 @@ def configure_exactly_once(env: StreamExecutionEnvironment) -> None:
     )
 
     # RocksDB with incremental snapshots
-    backend = EmbeddedRocksDBStateBackend(incremental=True)
+    backend = EmbeddedRocksDBStateBackend(enable_incremental_checkpointing=True)
     env.set_state_backend(backend)
-    env.get_config().set_restart_strategy_configuration(
-        {"type": "fixed-delay", "attempts": 3, "delay": Duration.of_seconds(10)}
+    env.set_restart_strategy(
+        RestartStrategies.fixed_delay_restart(
+            restart_attempts=3,
+            delay_between_attempts=timedelta(seconds=10),
+        )
     )

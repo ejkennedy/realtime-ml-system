@@ -11,8 +11,11 @@ from __future__ import annotations
 
 import click
 import structlog
+from dotenv import load_dotenv
 
 log = structlog.get_logger()
+
+load_dotenv()
 
 
 @click.command()

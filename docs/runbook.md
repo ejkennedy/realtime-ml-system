@@ -15,17 +15,25 @@ uv sync
 make up
 # Wait ~30 seconds for all services to initialise
 
-# 4. Generate synthetic feature data and materialise to Redis
+# 4. Train the initial model
+make train
+# → models/registry/fraud_detector/latest/model.onnx
+
+# 5. Generate synthetic feature data and materialise to Redis
 make seed-data
 make feast-apply
 make feast-materialize
 
-# 5. Train initial model
-make train
-# → models/registry/fraud_detector/latest/model.onnx
+# 6. Start serving in a separate terminal
+make serve
+# Wait for: "Deployed app 'fraud-detection' successfully."
 
-# 6. Verify the serving layer is up
+# 7. Verify the serving layer is up
 make smoke-test
+
+# 8. Optional: run the streaming path
+make flink-job
+make produce
 ```
 
 ### Daily Development Workflow
@@ -34,7 +42,7 @@ make smoke-test
 make up            # start all services
 make produce       # start synthetic transaction producer (optional)
 make flink-job     # submit Flink feature pipeline (optional)
-make serve         # start Ray Serve locally (if not using docker)
+make serve         # start Ray Serve locally in the foreground
 make smoke-test    # sanity check
 make down          # stop everything
 ```
@@ -72,6 +80,10 @@ uv run --package training python -m training.pipeline --iceberg
 6. Registered in MLflow under `fraud-detector` model name with `staging` alias
 7. Version manager picks up the `staging` alias and loads into `ShadowScorer`
 
+`make train` finishes when the model is logged and registered. The later
+30-minute shadow window belongs to serving-side promotion logic and does not
+block training completion.
+
 ## Model Promotion and Rollback
 
 ### Shadow Deployment Flow
@@ -83,6 +95,9 @@ When a new model is trained:
 4. After 30 minutes, shadow comparison metrics are evaluated
 5. If new model AUC >= baseline - 1%: auto-promote to `production`
 6. If regression detected: hold promotion, log warning, alert
+
+This happens after serving is already available. The `Shadow period ongoing`
+log lines are background status messages, not startup progress.
 
 ### Manual Promotion
 
@@ -107,12 +122,12 @@ This calls `VersionManager.rollback()` which:
 
 ```bash
 # Open MLflow UI
-open http://localhost:5000
+open http://localhost:5001
 
 # Or via CLI
 uv run python -c "
 import mlflow
-client = mlflow.MlflowClient(tracking_uri='http://localhost:5000')
+client = mlflow.MlflowClient(tracking_uri='http://localhost:5001')
 versions = client.search_model_versions(\"name='fraud-detector'\")
 for v in versions[:5]:
     print(f'v{v.version}: {v.aliases} | AUC: {v.run_id[:8]}')
@@ -186,6 +201,26 @@ Generates `reports/load_test_TIMESTAMP.html` with:
 - Error rate
 - Latency distribution histogram + CDF plot
 
+The load test also writes a latency distribution PNG into `reports/` before exiting.
+It also writes a compact Markdown summary to `reports/load_test_summary_TIMESTAMP.md`.
+
+To fail the run when successful responses exceed a latency threshold, set
+`LOAD_TEST_LATENCY_FAIL_THRESHOLD_MS`, for example:
+
+```bash
+LOAD_TEST_LATENCY_FAIL_THRESHOLD_MS=200 make load-test
+```
+
+For more realistic laptop benchmarking, run the lighter local profile:
+
+```bash
+make serve-perf
+make load-test-local
+```
+
+`make serve-perf` disables shadow traffic and version-manager polling and uses
+smaller local Ray / ONNX settings to reduce contention.
+
 ### Load Test with Web UI
 
 ```bash
@@ -218,6 +253,9 @@ make load-test-ui
 make feast-materialize
 # Materialises all feature views with data newer than last materialisation
 ```
+
+For a clean local setup, run `make seed-data` and `make feast-apply` once before
+the first `make feast-materialize`.
 
 ### Add a New Feature
 

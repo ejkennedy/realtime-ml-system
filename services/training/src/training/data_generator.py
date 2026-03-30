@@ -129,7 +129,7 @@ def _base_fraud_row() -> dict:
 def _hour_prob_legit() -> list[float]:
     """Realistic hour distribution for legitimate transactions (peak 10am-8pm)."""
     probs = np.zeros(24)
-    probs[8:22] = np.array([0.02, 0.04, 0.07, 0.08, 0.08, 0.07, 0.07, 0.07, 0.07, 0.06, 0.05, 0.05, 0.04, 0.04, 0.04])
+    probs[8:23] = np.array([0.02, 0.04, 0.07, 0.08, 0.08, 0.07, 0.07, 0.07, 0.07, 0.06, 0.05, 0.05, 0.04, 0.04, 0.04])
     probs[0:8] = 0.01
     probs[22:24] = 0.02
     return (probs / probs.sum()).tolist()

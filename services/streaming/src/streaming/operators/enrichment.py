@@ -7,14 +7,14 @@ saving ~3-5ms per request at the cost of manual schema validation.
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
 import redis
-import structlog
 from pyflink.datastream import MapFunction, RuntimeContext
 
-log = structlog.get_logger()
+log = logging.getLogger(__name__)
 
 
 class FeastEnrichmentOperator(MapFunction):
@@ -36,7 +36,10 @@ class FeastEnrichmentOperator(MapFunction):
             socket_timeout=0.5,
         )
         self._redis = redis.Redis(connection_pool=self._pool, decode_responses=True)
-        log.info("FeastEnrichmentOperator opened", host=os.environ.get("REDIS_HOST"))
+        log.info(
+            "FeastEnrichmentOperator opened host=%s",
+            os.environ.get("REDIS_HOST"),
+        )
 
     def close(self) -> None:
         self._pool.disconnect()
@@ -52,7 +55,7 @@ class FeastEnrichmentOperator(MapFunction):
                 pipe.hgetall(f"feast:merchant:{merchant_id}")
                 card_features, merchant_features = pipe.execute()
         except redis.RedisError as e:
-            log.warning("Redis enrichment failed, using defaults", error=str(e))
+            log.warning("Redis enrichment failed, using defaults error=%s", e)
             card_features, merchant_features = {}, {}
 
         value["card_risk_score"] = float(card_features.get("risk_score", 0.0))

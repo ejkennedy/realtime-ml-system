@@ -31,9 +31,7 @@ RUN export JAVA_HOME=$(dirname $(dirname $(readlink -f /usr/bin/javac))) && \
         confluent-kafka \
         pydantic \
         redis \
-        "pyarrow>=16.0,<18.0" \
         structlog \
-        python-dotenv \
-        feast
+        python-dotenv
 
 WORKDIR /opt/flink

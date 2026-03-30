@@ -18,10 +18,11 @@ import json
 import os
 
 import structlog
-from pyflink.common import SimpleStringSchema, WatermarkStrategy
+from pyflink.common import WatermarkStrategy
 from pyflink.common.serialization import SimpleStringSchema
 from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.datastream.connectors.kafka import (
+    DeliveryGuarantee,
     KafkaOffsetsInitializer,
     KafkaRecordSerializationSchema,
     KafkaSink,
@@ -47,7 +48,7 @@ def build_pipeline(env: StreamExecutionEnvironment) -> None:
         .set_bootstrap_servers(KAFKA_BROKERS)
         .set_topics(TOPIC_RAW)
         .set_group_id(CONSUMER_GROUP)
-        .set_starting_offsets(KafkaOffsetsInitializer.committed_offsets())
+        .set_starting_offsets(KafkaOffsetsInitializer.earliest())
         .set_value_only_deserializer(SimpleStringSchema())
         .build()
     )
@@ -92,7 +93,7 @@ def build_pipeline(env: StreamExecutionEnvironment) -> None:
             .build()
         )
         .set_delivery_guarantee(
-            org.apache.flink.connector.kafka.sink.KafkaRecordSerializationSchema.DeliveryGuarantee.EXACTLY_ONCE
+            DeliveryGuarantee.EXACTLY_ONCE
         )
         .set_transactional_id_prefix("fraud-pipeline-")
         .build()

@@ -2415,30 +2415,18 @@ wheels = [
 ]
 
 [[package]]
-name = "onnxconverter-common"
+name = "onnxmltools"
 version = "1.16.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
     { name = "onnx" },
-    { name = "packaging" },
     { name = "protobuf" },
+    { name = "skl2onnx" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/41/3e/85a40b6e56a8aaa45bffc9eb00f93182b87841b4dc5a4198ea609993e17c/onnxmltools-1.16.0.tar.gz", hash = "sha256:cd76e0a7ba6a3c4ca4acf3b4c7973cda6a70f2edc146ab11d4efc3dfbee6805a", size = 208397, upload-time = "2026-01-30T12:45:06.1Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4a/67/8dca1868a6e226f8d3f7d666cb6a48b79a60aad5267b16b24627cd8d9eb8/onnxconverter_common-1.16.0-py2.py3-none-any.whl", hash = "sha256:df39ee96f17fff119dff10dd245467651b60b9e8a96020eb93402239794852f7", size = 89511, upload-time = "2025-08-28T19:37:46.988Z" },
-]
-
-[[package]]
-name = "onnxmltools"
-version = "1.12.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy" },
-    { name = "onnx" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/01/3b/7e78d3b3fe34a41516be124d0991c0cb87184d569e9d2b87acab48d6b80b/onnxmltools-1.12.0.tar.gz", hash = "sha256:ebdc529a78ce79c4be767cd6535544f983fe9dc0ca10f434194086f1c5be64d1", size = 197555, upload-time = "2023-12-18T05:51:17.322Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a8/c4/1e585300582074dff8b1b5768c24b3875e5b1556e6bd5b8adfaf8e4bb2e0/onnxmltools-1.12.0-py2.py3-none-any.whl", hash = "sha256:c51608ead3806a50f2cd70d466ee46c6e71a3f315ac629b0dffaa1081206a66c", size = 329039, upload-time = "2023-12-18T05:51:15.115Z" },
+    { url = "https://files.pythonhosted.org/packages/fb/e6/6713d9a089a6861b4bf748f02a6238cb2759968aadf672dccef3e960376b/onnxmltools-1.16.0-py3-none-any.whl", hash = "sha256:7b27196e7dcc0d9de29110f211e7941ad1c71dd97606baa729144d9acd105d3c", size = 303991, upload-time = "2026-01-30T12:45:04.809Z" },
 ]
 
 [[package]]
@@ -3204,6 +3192,7 @@ name = "realtime-ml-system"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "boto3" },
     { name = "click" },
     { name = "confluent-kafka" },
     { name = "evidently" },
@@ -3223,13 +3212,13 @@ dependencies = [
     { name = "ray", extra = ["serve"] },
     { name = "redis" },
     { name = "scikit-learn" },
-    { name = "skl2onnx" },
     { name = "structlog" },
     { name = "xgboost" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "boto3", specifier = ">=1.34" },
     { name = "click", specifier = ">=8.1" },
     { name = "confluent-kafka", specifier = ">=2.4" },
     { name = "evidently", specifier = ">=0.4" },
@@ -3249,7 +3238,6 @@ requires-dist = [
     { name = "ray", extras = ["serve"], specifier = ">=2.32" },
     { name = "redis", specifier = ">=4.2.2" },
     { name = "scikit-learn", specifier = ">=1.5" },
-    { name = "skl2onnx", specifier = ">=1.17" },
     { name = "structlog", specifier = ">=24.0" },
     { name = "xgboost", specifier = ">=2.1" },
 ]
@@ -3561,16 +3549,15 @@ wheels = [
 
 [[package]]
 name = "skl2onnx"
-version = "1.17.0"
+version = "1.20.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "onnx" },
-    { name = "onnxconverter-common" },
     { name = "scikit-learn" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f2/91/53c1d0085fb11c6ae2b2092160f55380fa361b8ced1144eada49add70adb/skl2onnx-1.17.0.tar.gz", hash = "sha256:7127dc84e470f489f68094ccfff9a5a815b609f700d43e708e6f658a33b06403", size = 931965, upload-time = "2024-05-30T12:28:02.129Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cb/39/a5015fefb613d5172541740540851a301c53392b57051cf4d313cb6d5718/skl2onnx-1.20.0.tar.gz", hash = "sha256:c74ea827d92ba186fe659695e8fc989cd97bfc320edce3d32b9936a5878da10a", size = 956369, upload-time = "2026-01-30T10:52:07.694Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/61/db/343223f105c34cbf8dd1237693e8628deb5009f2a9c4f2e3d2c6546f2766/skl2onnx-1.17.0-py2.py3-none-any.whl", hash = "sha256:27942fc2743efe9dff56380001da4685812d0f5b1b0b9c1a032e80d059d6779a", size = 298421, upload-time = "2024-05-30T12:27:59.555Z" },
+    { url = "https://files.pythonhosted.org/packages/24/d3/b0db77025a4683ec1b9aafc301b78c7e2e2059a1e2543e918435f3d03582/skl2onnx-1.20.0-py3-none-any.whl", hash = "sha256:30cac34803d1776c14b336ae945e48ef28debfc339215acde1cc04b963ed3f7b", size = 317169, upload-time = "2026-01-30T10:52:05.824Z" },
 ]
 
 [[package]]
@@ -3889,6 +3876,7 @@ name = "training"
 version = "0.1.0"
 source = { editable = "services/training" }
 dependencies = [
+    { name = "boto3" },
     { name = "click" },
     { name = "feast", extra = ["redis"] },
     { name = "mlflow" },
@@ -3901,7 +3889,6 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "scikit-learn" },
     { name = "scipy" },
-    { name = "skl2onnx" },
     { name = "structlog" },
     { name = "xgboost" },
 ]
@@ -3916,13 +3903,14 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "boto3", specifier = ">=1.34" },
     { name = "click", specifier = ">=8.1" },
     { name = "feast", extras = ["redis"], specifier = "==0.40.0" },
     { name = "jupyter", marker = "extra == 'dev'", specifier = ">=1.0" },
     { name = "matplotlib", marker = "extra == 'dev'", specifier = ">=3.9" },
     { name = "mlflow", specifier = ">=2.14,<3.0" },
     { name = "numpy", specifier = ">=1.26,<2.0" },
-    { name = "onnxmltools", specifier = "==1.12.0" },
+    { name = "onnxmltools", specifier = ">=1.12" },
     { name = "onnxruntime", specifier = "==1.18.1" },
     { name = "pandas", specifier = ">=2.2" },
     { name = "pyarrow", specifier = ">=16.0,<18.0" },
@@ -3932,7 +3920,6 @@ requires-dist = [
     { name = "scikit-learn", specifier = ">=1.5" },
     { name = "scipy", specifier = ">=1.13" },
     { name = "seaborn", marker = "extra == 'dev'", specifier = ">=0.13" },
-    { name = "skl2onnx", specifier = "==1.17.0" },
     { name = "structlog", specifier = ">=24.0" },
     { name = "xgboost", specifier = "==2.1.0" },
 ]

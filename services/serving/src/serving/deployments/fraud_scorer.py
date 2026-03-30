@@ -19,10 +19,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from serving.middleware.latency_tracker import (
-    fraud_predictions,
     fraud_rate_gauge,
-    onnx_latency,
-    redis_latency,
+    fraud_predictions,
     track_inference,
 )
 from serving.models.onnx_runner import FEATURE_NAMES, NUM_FEATURES, OnnxSessionPool
@@ -30,6 +28,7 @@ from serving.models.onnx_runner import FEATURE_NAMES, NUM_FEATURES, OnnxSessionP
 log = structlog.get_logger()
 
 POOL_SIZE = int(os.environ.get("ONNX_SESSION_POOL_SIZE", 4))
+SCORER_REPLICAS = int(os.environ.get("SERVE_SCORER_REPLICAS", 2))
 MODEL_PATH = os.environ.get("ONNX_MODEL_PATH", "/models/fraud_detector/latest/model.onnx")
 FRAUD_THRESHOLD = float(os.environ.get("FRAUD_THRESHOLD", 0.5))
 
@@ -41,8 +40,8 @@ POS_TYPE_MAP = {"chip": 0, "swipe": 1, "contactless": 2, "online": 3}
 
 
 @serve.deployment(
-    num_replicas=2,
-    max_concurrent_queries=POOL_SIZE,   # matches pool size — no internal queue buildup
+    num_replicas=SCORER_REPLICAS,
+    max_ongoing_requests=POOL_SIZE,   # matches pool size — no internal queue buildup
     ray_actor_options={"num_cpus": 1.0},
     health_check_period_s=10,
     health_check_timeout_s=5,
@@ -84,10 +83,10 @@ class FraudScorer:
 
             # Update EMA fraud rate gauge
             self._ema_rate = self._ema_alpha * float(is_fraud) + (1 - self._ema_alpha) * self._ema_rate
-            fraud_rate_gauge.set(self._ema_rate)
+            fraud_rate_gauge().set(self._ema_rate)
 
             if is_fraud:
-                fraud_predictions.labels(model_version=self._model_version).inc()
+                fraud_predictions().labels(model_version=self._model_version).inc()
 
             result = {
                 "event_id": payload.get("event_id", ""),

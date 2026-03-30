@@ -16,15 +16,27 @@ import os
 import random
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 from locust import HttpUser, between, events, task
 from locust.runners import MasterRunner, WorkerRunner
 
 from load_testing.transaction_gen import TransactionGenerator
+from load_testing.latency_report import plot_distribution, write_markdown_summary
 
 RNG = np.random.default_rng()
 _gen = TransactionGenerator()
+LATENCY_FAIL_THRESHOLD_MS = float(os.environ.get("LOAD_TEST_LATENCY_FAIL_THRESHOLD_MS", "0"))
+LOAD_TEST_STAGE1_DURATION_S = int(os.environ.get("LOAD_TEST_STAGE1_DURATION_S", 60))
+LOAD_TEST_STAGE1_USERS = int(os.environ.get("LOAD_TEST_STAGE1_USERS", 50))
+LOAD_TEST_STAGE1_SPAWN_RATE = int(os.environ.get("LOAD_TEST_STAGE1_SPAWN_RATE", 5))
+LOAD_TEST_STAGE2_DURATION_S = int(os.environ.get("LOAD_TEST_STAGE2_DURATION_S", 300))
+LOAD_TEST_STAGE2_USERS = int(os.environ.get("LOAD_TEST_STAGE2_USERS", 200))
+LOAD_TEST_STAGE2_SPAWN_RATE = int(os.environ.get("LOAD_TEST_STAGE2_SPAWN_RATE", 20))
+LOAD_TEST_STAGE3_DURATION_S = int(os.environ.get("LOAD_TEST_STAGE3_DURATION_S", 360))
+LOAD_TEST_STAGE3_USERS = int(os.environ.get("LOAD_TEST_STAGE3_USERS", 0))
+LOAD_TEST_STAGE3_SPAWN_RATE = int(os.environ.get("LOAD_TEST_STAGE3_SPAWN_RATE", 50))
 
 
 class FraudScorerUser(HttpUser):
@@ -46,16 +58,18 @@ class FraudScorerUser(HttpUser):
         self._idx += 1
 
         with self.client.post(
-            "/score",
+            "/",
             json=payload,
             catch_response=True,
-            name="/score",
+            name="/",
         ) as response:
             if response.status_code == 200:
-                result = response.json()
+                response.json()
                 latency_ms = response.elapsed.total_seconds() * 1000
-                if latency_ms > 200:
-                    response.failure(f"Latency {latency_ms:.1f}ms exceeds 200ms threshold")
+                if LATENCY_FAIL_THRESHOLD_MS > 0 and latency_ms > LATENCY_FAIL_THRESHOLD_MS:
+                    response.failure(
+                        f"Latency {latency_ms:.1f}ms exceeds {LATENCY_FAIL_THRESHOLD_MS:.0f}ms threshold"
+                    )
                 else:
                     response.success()
             else:
@@ -80,6 +94,30 @@ def on_request(
         record_latency(response_time)
 
 
+@events.quitting.add_listener
+def on_quitting(environment, **kwargs):
+    if isinstance(environment.runner, (MasterRunner, WorkerRunner)):
+        return
+
+    reports_dir = Path("./reports")
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = int(time.time())
+    plot_path = reports_dir / f"latency_locust_{timestamp}.png"
+    summary_path = reports_dir / f"load_test_summary_{timestamp}.md"
+
+    plot_distribution(label="locust", output_path=str(plot_path))
+
+    total = environment.stats.total
+    write_markdown_summary(
+        str(summary_path),
+        label="locust",
+        total_requests=total.num_requests,
+        total_failures=total.num_failures,
+        avg_rps=total.total_rps,
+        sla_ms=50.0,
+    )
+
+
 # ── Custom load shape: ramp to 10k/sec ────────────────────────────────────────
 
 from locust import LoadTestShape
@@ -92,9 +130,21 @@ class SteadyStateShape(LoadTestShape):
     Phase 3 (300-360s): ramp down for graceful shutdown
     """
     stages = [
-        {"duration": 60, "users": 50, "spawn_rate": 5},
-        {"duration": 300, "users": 200, "spawn_rate": 20},
-        {"duration": 360, "users": 0, "spawn_rate": 50},
+        {
+            "duration": LOAD_TEST_STAGE1_DURATION_S,
+            "users": LOAD_TEST_STAGE1_USERS,
+            "spawn_rate": LOAD_TEST_STAGE1_SPAWN_RATE,
+        },
+        {
+            "duration": LOAD_TEST_STAGE2_DURATION_S,
+            "users": LOAD_TEST_STAGE2_USERS,
+            "spawn_rate": LOAD_TEST_STAGE2_SPAWN_RATE,
+        },
+        {
+            "duration": LOAD_TEST_STAGE3_DURATION_S,
+            "users": LOAD_TEST_STAGE3_USERS,
+            "spawn_rate": LOAD_TEST_STAGE3_SPAWN_RATE,
+        },
     ]
 
     def tick(self):

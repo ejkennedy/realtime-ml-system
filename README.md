@@ -87,19 +87,49 @@ make feast-materialize  # load features into Redis
 make serve          # or make serve-docker if stack is running
 ```
 
+`make serve` is a long-running foreground process. The API is ready once you see
+`Deployed app 'fraud-detection' successfully` in the logs. The later 30-minute
+`Shadow period ongoing` messages are background model-promotion checks, not
+startup work.
+
 ### 6. Smoke test
 
 ```bash
 make smoke-test
 ```
 
-### 7. Run load test (10k req/s)
+Run `make smoke-test` from a second terminal while `make serve` is still running.
+
+### 7. Start the streaming path
+
+```bash
+make flink-job      # submit the PyFlink feature pipeline
+make produce        # emit synthetic transactions into Redpanda
+```
+
+### 8. Run load test (10k req/s)
 
 ```bash
 make load-test
 ```
 
 Results saved to `reports/load_test_TIMESTAMP.html`.
+Latency distribution PNGs are generated alongside the HTML report in `reports/`.
+Each run also writes a compact Markdown summary to `reports/load_test_summary_TIMESTAMP.md`.
+By default, slow 200 responses are kept as successes so the report reflects
+actual HTTP failure rate. To make latency breaches fail the run, set
+`LOAD_TEST_LATENCY_FAIL_THRESHOLD_MS`, for example:
+`LOAD_TEST_LATENCY_FAIL_THRESHOLD_MS=200 make load-test`.
+
+For laptop-friendly benchmarking, use:
+
+```bash
+make serve-perf
+make load-test-local
+```
+
+`make serve-perf` disables shadow traffic and the version manager, and uses fewer
+Ray replicas / ONNX sessions to reduce local CPU oversubscription.
 
 ## Key Design Decisions
 
@@ -130,6 +160,7 @@ FraudRouter
 ```
 
 Shadow results flow to `shadow-results` topic for offline AUC comparison. Promotion only happens after 30 minutes with no metric regression (>1% tolerance).
+This shadow window begins after serving is already live; it does not delay requests.
 
 ### Drift Detection → Retraining
 
@@ -167,12 +198,19 @@ Two layers update without full retraining:
 | Ray Serve | http://localhost:8000 | Inference endpoint |
 | Ray Dashboard | http://localhost:8265 | Serving health |
 | Flink UI | http://localhost:8081 | Stream job monitoring |
-| MLflow | http://localhost:5000 | Model registry |
+| MLflow | http://localhost:5001 | Model registry |
 | Grafana | http://localhost:3000 | Latency dashboards |
 | Prometheus | http://localhost:9090 | Metrics |
 | Redpanda Console | http://localhost:8080 | Kafka topics |
 | MinIO | http://localhost:9001 | Object storage |
 | Evidently | http://localhost:8085 | Drift reports |
+
+## Notes
+
+- `make serve` is expected to keep running until you stop it with `Ctrl+C`.
+- `make serve-docker` only restarts the `ray-head` container from the Docker stack started by `make up`.
+- `make smoke-test` validates serving only; it does not require the Flink job or producer.
+- The full streaming demo needs both `make flink-job` and `make produce`.
 
 ## Prometheus Alerts
 

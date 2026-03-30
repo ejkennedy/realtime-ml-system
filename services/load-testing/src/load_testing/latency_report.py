@@ -82,3 +82,51 @@ def plot_distribution(
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close()
     return output_path
+
+
+def write_markdown_summary(
+    output_path: str,
+    *,
+    label: str = "locust",
+    total_requests: int = 0,
+    total_failures: int = 0,
+    avg_rps: float = 0.0,
+    sla_ms: float = 50.0,
+) -> str:
+    stats = get_percentiles()
+    failure_rate = (total_failures / total_requests * 100) if total_requests else 0.0
+    p95_vs_sla = "within" if stats["p95"] <= sla_ms else "above"
+
+    content = f"""# Load Test Summary
+
+Label: `{label}`
+
+## Request Stats
+
+| Metric | Value |
+|---|---:|
+| Total requests | {total_requests} |
+| Total failures | {total_failures} |
+| Failure rate | {failure_rate:.2f}% |
+| Average RPS | {avg_rps:.2f} |
+
+## Latency
+
+| Percentile | Latency (ms) |
+|---|---:|
+| p50 | {stats["p50"]:.2f} |
+| p95 | {stats["p95"]:.2f} |
+| p99 | {stats["p99"]:.2f} |
+| p99.9 | {stats["p999"]:.2f} |
+| Mean | {stats["mean"]:.2f} |
+
+## SLA Check
+
+- Target p95 SLA: `{sla_ms:.0f} ms`
+- Result: p95 is `{p95_vs_sla}` SLA
+"""
+
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return str(path)

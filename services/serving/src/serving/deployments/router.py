@@ -28,11 +28,13 @@ log = structlog.get_logger()
 
 SHADOW_RATIO = float(os.environ.get("SHADOW_RATIO", 1.0))
 SHADOW_TIMEOUT_S = float(os.environ.get("SHADOW_TIMEOUT_S", 0.1))
+ROUTER_REPLICAS = int(os.environ.get("SERVE_ROUTER_REPLICAS", 2))
+ROUTER_MAX_ONGOING_REQUESTS = int(os.environ.get("SERVE_ROUTER_MAX_ONGOING_REQUESTS", 100))
 
 
 @serve.deployment(
-    num_replicas=2,
-    max_concurrent_queries=100,
+    num_replicas=ROUTER_REPLICAS,
+    max_ongoing_requests=ROUTER_MAX_ONGOING_REQUESTS,
     ray_actor_options={"num_cpus": 0.5},
 )
 class FraudRouter:
@@ -72,7 +74,7 @@ class FraudRouter:
             shadow_result = await asyncio.wait_for(shadow_ref, timeout=SHADOW_TIMEOUT_S)
             await self._publish_shadow_result(payload, shadow_result)
         except asyncio.TimeoutError:
-            shadow_timeout_counter.inc()
+            shadow_timeout_counter().inc()
         except Exception as e:
             log.debug("Shadow handler error", error=str(e))
 

@@ -1,4 +1,4 @@
-.PHONY: help up down logs topics feast-apply feast-materialize train serve load-test drift-check rollback clean
+.PHONY: help up down logs topics feast-apply feast-materialize train serve serve-perf load-test load-test-local drift-check rollback clean
 
 COMPOSE = docker compose -f infra/docker/docker-compose.yml
 UV = uv
@@ -17,7 +17,7 @@ up: ## Start all local services
 	@echo "  Redpanda Console:  http://localhost:8080"
 	@echo "  Flink UI:          http://localhost:8081"
 	@echo "  Ray Dashboard:     http://localhost:8265"
-	@echo "  MLflow:            http://localhost:5000"
+	@echo "  MLflow:            http://localhost:5001"
 	@echo "  Grafana:           http://localhost:3000 (admin/admin)"
 	@echo "  Prometheus:        http://localhost:9090"
 	@echo "  MinIO:             http://localhost:9001 (minioadmin/minioadmin)"
@@ -62,6 +62,15 @@ train-quick: ## Quick training run (50k samples)
 serve: ## Start Ray Serve locally (without Docker)
 	$(UV) run --package serving python -m serving.app
 
+serve-perf: ## Start Ray Serve with lighter local perf settings
+	SHADOW_ENABLED=false \
+	VERSION_MANAGER_ENABLED=false \
+	SERVE_SCORER_REPLICAS=1 \
+	SERVE_ROUTER_REPLICAS=1 \
+	SERVE_ROUTER_MAX_ONGOING_REQUESTS=32 \
+	ONNX_SESSION_POOL_SIZE=2 \
+	$(UV) run --package serving python -m serving.app
+
 serve-docker: ## Deploy serving via docker-compose ray-head
 	$(COMPOSE) restart ray-head
 
@@ -78,20 +87,37 @@ flink-job: ## Submit Flink feature pipeline job
 # ── Load Testing ──────────────────────────────────────────────────────────────
 
 load-test: ## Run Locust load test (10k req/s target, 5 min)
+	mkdir -p reports
 	$(UV) run --package load-testing locust \
 		-f services/load-testing/src/load_testing/locustfile.py \
 		--host http://localhost:8000 \
 		--users 200 --spawn-rate 20 --run-time 5m \
 		--headless --html reports/load_test_$$(date +%Y%m%d_%H%M%S).html
-	@$(MAKE) latency-plot
+
+load-test-local: ## Run lighter local load test profile
+	mkdir -p reports
+	LOAD_TEST_STAGE1_DURATION_S=20 \
+	LOAD_TEST_STAGE1_USERS=10 \
+	LOAD_TEST_STAGE1_SPAWN_RATE=2 \
+	LOAD_TEST_STAGE2_DURATION_S=80 \
+	LOAD_TEST_STAGE2_USERS=30 \
+	LOAD_TEST_STAGE2_SPAWN_RATE=5 \
+	LOAD_TEST_STAGE3_DURATION_S=100 \
+	LOAD_TEST_STAGE3_USERS=0 \
+	LOAD_TEST_STAGE3_SPAWN_RATE=10 \
+	$(UV) run --package load-testing locust \
+		-f services/load-testing/src/load_testing/locustfile.py \
+		--host http://localhost:8000 \
+		--headless --html reports/load_test_local_$$(date +%Y%m%d_%H%M%S).html
 
 load-test-ui: ## Run Locust with web UI
+	mkdir -p reports
 	$(UV) run --package load-testing locust \
 		-f services/load-testing/src/load_testing/locustfile.py \
 		--host http://localhost:8000
 
-latency-plot: ## Generate latency distribution plots
-	$(UV) run python scripts/plot_latency.py
+latency-plot: ## Latency plots are generated automatically during load-test
+	@echo "Run 'make load-test' to generate HTML and latency plots in ./reports."
 
 # ── Monitoring ────────────────────────────────────────────────────────────────
 
@@ -102,7 +128,7 @@ drift-check: ## Run drift detection check
 
 rollback: ## One-click model rollback to previous production version
 	$(UV) run python scripts/rollback.py
-	@echo "Rollback complete. Check http://localhost:5000 for model versions."
+	@echo "Rollback complete. Check http://localhost:5001 for model versions."
 
 shadow-status: ## Show shadow deployment comparison metrics
 	$(UV) run python scripts/shadow_status.py

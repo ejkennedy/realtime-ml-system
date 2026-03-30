@@ -144,7 +144,7 @@ services:
     networks:
       - fraud-net
     ports:
-      - "5000:5000"
+      - "5001:5000"
     environment:
       MLFLOW_S3_ENDPOINT_URL: http://minio:9000
       AWS_ACCESS_KEY_ID: minioadmin
@@ -158,7 +158,7 @@ services:
     volumes:
       - mlflow-data:/mlflow
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
       interval: 15s
       retries: 5
 
@@ -180,6 +180,8 @@ services:
     environment:
       FLINK_ROLE: jobmanager
       JOB_MANAGER_RPC_ADDRESS: flink-jobmanager
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
       KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
       REDIS_HOST: redis
       REDIS_PORT: "6379"
@@ -209,7 +211,9 @@ services:
     environment:
       FLINK_ROLE: taskmanager
       JOB_MANAGER_RPC_ADDRESS: flink-jobmanager
-      FLINK_TASK_MANAGER_NUMBER_OF_TASK_SLOTS: "4"
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 4
       KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
       REDIS_HOST: redis
       REDIS_PORT: "6379"

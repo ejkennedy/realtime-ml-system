@@ -13,14 +13,11 @@ from typing import Any
 
 from pyflink.common import Types
 from pyflink.common.watermark_strategy import WatermarkStrategy
-from pyflink.datastream import ProcessFunction, RuntimeContext
+from pyflink.datastream import KeyedProcessFunction, RuntimeContext
 from pyflink.datastream.state import (
     ListState,
     ListStateDescriptor,
     StateTtlConfig,
-    TtlUpdateType,
-    ValueState,
-    ValueStateDescriptor,
 )
 
 from streaming.schemas.transaction import RawTransaction, VelocityFeatures
@@ -32,7 +29,7 @@ WINDOW_1H = 3_600_000
 WINDOW_24H = 86_400_000
 
 
-class VelocityOperator(ProcessFunction):
+class VelocityOperator(KeyedProcessFunction):
     """
     Stateful Flink ProcessFunction that computes per-card velocity features.
 
@@ -47,10 +44,10 @@ class VelocityOperator(ProcessFunction):
 
     def open(self, runtime_context: RuntimeContext) -> None:
         ttl = (
-            StateTtlConfig.new_builder(org.apache.flink.api.common.time.Time.hours(25))
-            .set_update_type(TtlUpdateType.ON_CREATE_AND_WRITE)
+            StateTtlConfig.new_builder(Time.hours(25))
+            .set_update_type(StateTtlConfig.UpdateType.OnCreateAndWrite)
             .set_state_visibility(
-                org.apache.flink.api.common.state.StateTtlConfig.StateVisibility.NeverReturnExpired
+                StateTtlConfig.StateVisibility.NeverReturnExpired
             )
             .build()
         )
@@ -71,7 +68,7 @@ class VelocityOperator(ProcessFunction):
         merchant_descriptor.enable_time_to_live(ttl)
         self._tx_merchants: ListState = runtime_context.get_list_state(merchant_descriptor)
 
-    def process_element(self, value: dict[str, Any], ctx: ProcessFunction.Context):
+    def process_element(self, value: dict[str, Any], ctx: KeyedProcessFunction.Context):
         now_ms = int(ctx.timestamp()) if ctx.timestamp() else int(datetime.now(timezone.utc).timestamp() * 1000)
         cutoff_24h = now_ms - WINDOW_24H
 

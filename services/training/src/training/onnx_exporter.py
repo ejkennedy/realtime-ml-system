@@ -3,9 +3,18 @@ XGBoost → ONNX export with validation.
 
 Uses onnxmltools for XGBoost conversion and validates the exported model
 produces identical predictions to the original model (within fp32 tolerance).
+
+onnx >=1.16 made `onnx.mapping` private (`onnx._mapping`). The patch below
+restores the public name so that onnxmltools can import it without modification.
 """
 
 from __future__ import annotations
+
+# Must happen before any onnxmltools import.
+import onnx as _onnx_mod
+if not hasattr(_onnx_mod, "mapping"):
+    import onnx._mapping as _onnx_mapping
+    _onnx_mod.mapping = _onnx_mapping
 
 import numpy as np
 import onnxruntime as ort
@@ -21,7 +30,7 @@ def export_xgboost_to_onnx(
     model: xgb.XGBClassifier,
     output_path: str,
     n_features: int,
-    opset_version: int = 18,
+    opset_version: int = 15,
 ) -> None:
     """
     Convert XGBoost classifier to ONNX format.

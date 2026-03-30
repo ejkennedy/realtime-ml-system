@@ -31,7 +31,7 @@ PAYLOAD='{
 }'
 
 START=$(date +%s%N)
-RESPONSE=$(curl -s -X POST "$HOST/score" \
+RESPONSE=$(curl -s -X POST "$HOST/" \
   -H "Content-Type: application/json" \
   -d "$PAYLOAD")
 END=$(date +%s%N)

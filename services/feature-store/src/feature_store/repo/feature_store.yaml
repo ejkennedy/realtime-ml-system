@@ -1,4 +1,4 @@
-project: fraud-detection
+project: fraud_detection
 registry: ./registry/registry.db
 provider: local
 

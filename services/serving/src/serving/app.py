@@ -15,11 +15,14 @@ from __future__ import annotations
 import os
 
 import ray
+from dotenv import load_dotenv
 from ray import serve
 
 import structlog
 
 log = structlog.get_logger()
+
+load_dotenv()
 
 
 def build_app():
@@ -50,25 +53,30 @@ def build_app():
 
 def main() -> None:
     ray.init(dashboard_host="0.0.0.0", ignore_reinit_error=True)
+    serve.start(http_options={"host": "0.0.0.0", "port": 8000})
 
     app = build_app()
-    serve.run(app, host="0.0.0.0", port=8000, name="fraud-detection")
+    serve.run(app, name="fraud-detection")
 
     log.info("Fraud detection serving started", host="0.0.0.0", port=8000)
 
     # Start version manager polling
-    try:
-        from serving.models.onnx_runner import OnnxSessionPool
-        from serving.models.version_manager import VersionManager
-        pool = OnnxSessionPool(
-            os.environ.get("ONNX_MODEL_PATH", "/models/fraud_detector/latest/model.onnx"),
-            pool_size=int(os.environ.get("ONNX_SESSION_POOL_SIZE", 4)),
-        )
-        vm = VersionManager(pool)
-        vm.start_polling()
-        log.info("Version manager polling started")
-    except Exception as e:
-        log.warning("Version manager not started", error=str(e))
+    version_manager_enabled = os.environ.get("VERSION_MANAGER_ENABLED", "true") == "true"
+    if version_manager_enabled:
+        try:
+            from serving.models.onnx_runner import OnnxSessionPool
+            from serving.models.version_manager import VersionManager
+            pool = OnnxSessionPool(
+                os.environ.get("ONNX_MODEL_PATH", "/models/fraud_detector/latest/model.onnx"),
+                pool_size=int(os.environ.get("ONNX_SESSION_POOL_SIZE", 4)),
+            )
+            vm = VersionManager(pool)
+            vm.start_polling()
+            log.info("Version manager polling started")
+        except Exception as e:
+            log.warning("Version manager not started", error=str(e))
+    else:
+        log.info("Version manager disabled")
 
     # Block indefinitely
     import time

@@ -74,7 +74,7 @@ class VersionManager:
             if self._shadow_candidate and self._shadow_candidate.version == staging_mv.version:
                 return  # Already tracking this candidate
 
-        onnx_uri = f"models:/{MLFLOW_MODEL_NAME}/{staging_mv.version}/model.onnx"
+        onnx_uri = self._run_onnx_uri(staging_mv.run_id)
         local_path = mlflow.artifacts.download_artifacts(onnx_uri)
 
         metrics = self._client.get_run(staging_mv.run_id).data.metrics
@@ -160,7 +160,7 @@ class VersionManager:
                 return False
 
             previous = production_versions[1]
-            onnx_uri = f"models:/{MLFLOW_MODEL_NAME}/{previous.version}/model.onnx"
+            onnx_uri = self._run_onnx_uri(previous.run_id)
             local_path = mlflow.artifacts.download_artifacts(onnx_uri)
             self._pool.reload(local_path)
             self._client.set_registered_model_alias(
@@ -185,3 +185,7 @@ class VersionManager:
             return runs[0].data.metrics
         except Exception:
             return None
+
+    @staticmethod
+    def _run_onnx_uri(run_id: str) -> str:
+        return f"runs:/{run_id}/model/model.onnx"
