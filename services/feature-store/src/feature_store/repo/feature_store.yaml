@@ -1,0 +1,12 @@
+project: fraud-detection
+registry: ./registry/registry.db
+provider: local
+
+online_store:
+  type: redis
+  connection_string: "localhost:6379"
+
+offline_store:
+  type: file   # switch to iceberg in production
+
+entity_key_serialization_version: 2

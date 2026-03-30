@@ -1,0 +1,35 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []  # Configure alertmanager here for production
+
+scrape_configs:
+  - job_name: "ray-serve"
+    static_configs:
+      - targets: ["ray-head:8000"]
+    metrics_path: /metrics
+
+  - job_name: "fraud-serving"
+    static_configs:
+      - targets: ["ray-head:8000"]
+    metrics_path: /api/metrics
+
+  - job_name: "flink"
+    static_configs:
+      - targets: ["flink-jobmanager:9249"]
+
+  - job_name: "redis"
+    static_configs:
+      - targets: ["redis:6379"]
+
+  - job_name: "monitoring-service"
+    static_configs:
+      - targets: ["monitoring:8086"]
+    metrics_path: /metrics

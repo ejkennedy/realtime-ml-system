@@ -1,0 +1,51 @@
+# Environment
+.env
+*.env.local
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+.uv/
+*.egg-info/
+dist/
+build/
+
+# Models (large binary artifacts)
+models/registry/**/*.onnx
+!models/registry/.gitkeep
+models/triton/fraud_model/1/model.onnx
+
+# Data (generated/synthetic)
+data/synthetic/*.parquet
+data/synthetic/*.csv
+data/seeds/*.csv
+data/scored/
+data/reference/
+
+# Reports
+reports/
+services/monitoring/src/monitoring/reports/
+
+# Flink state
+infra/docker/flink-checkpoints/
+
+# MLflow
+mlflow.db
+mlruns/
+
+# Load test results
+*.html
+
+# Terraform
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.backup
+infra/terraform/.terraform.lock.hcl
+
+# macOS
+.DS_Store

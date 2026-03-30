@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "serving"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "ray[serve]==2.32.0",
+    "onnxruntime==1.18.1",
+    "numpy>=1.26,<2.0",
+    "feast[redis]==0.40.0",
+    "redis>=5.0",
+    "pydantic>=2.7",
+    "prometheus-client>=0.20",
+    "structlog>=24.0",
+    "mlflow>=2.14,<3.0",
+    "python-dotenv>=1.0",
+    "httpx>=0.27",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-mock>=3.14"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/serving"]

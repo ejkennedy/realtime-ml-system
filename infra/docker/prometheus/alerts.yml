@@ -1,0 +1,53 @@
+groups:
+  - name: fraud-detection
+    interval: 60s
+    rules:
+      - alert: InferenceLatencyHigh
+        expr: histogram_quantile(0.95, rate(fraud_inference_duration_seconds_bucket[5m])) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 inference latency above 50ms SLA"
+          description: "p95 latency is {{ $value | humanizeDuration }} (SLA: 50ms)"
+
+      - alert: InferenceLatencyCritical
+        expr: histogram_quantile(0.95, rate(fraud_inference_duration_seconds_bucket[5m])) > 0.1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "p95 inference latency critically high (>100ms)"
+
+      - alert: FraudModelDriftHigh
+        expr: fraud_feature_drift_share > 0.30
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Feature drift above 30% threshold — retraining recommended"
+          description: "Drift share: {{ $value }}"
+
+      - alert: FraudModelDriftCritical
+        expr: fraud_feature_drift_share > 0.40
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Feature drift critically high — immediate review required"
+
+      - alert: FraudRateSpikeAnomaly
+        expr: fraud_prediction_fraud_rate > 0.15
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Fraud prediction rate above 15% — possible target drift"
+
+      - alert: ServingErrorRateHigh
+        expr: rate(fraud_requests_total{status="error"}[5m]) / rate(fraud_requests_total[5m]) > 0.01
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Error rate above 1% on serving endpoint"

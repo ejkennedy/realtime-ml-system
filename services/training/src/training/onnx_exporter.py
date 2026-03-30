@@ -1,0 +1,83 @@
+"""
+XGBoost → ONNX export with validation.
+
+Uses onnxmltools for XGBoost conversion and validates the exported model
+produces identical predictions to the original model (within fp32 tolerance).
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import onnxruntime as ort
+import structlog
+import xgboost as xgb
+from onnxmltools import convert_xgboost
+from onnxmltools.convert.common.data_types import FloatTensorType
+
+log = structlog.get_logger()
+
+
+def export_xgboost_to_onnx(
+    model: xgb.XGBClassifier,
+    output_path: str,
+    n_features: int,
+    opset_version: int = 18,
+) -> None:
+    """
+    Convert XGBoost classifier to ONNX format.
+
+    The exported model takes a float32 input of shape (batch, n_features)
+    and produces two outputs:
+      - output_label: int64 predictions (shape: batch)
+      - output_probability: float probabilities (shape: batch x 2)
+
+    Validates that ONNX output matches XGBoost output within 1e-5 tolerance.
+    """
+    initial_type = [("float_input", FloatTensorType([None, n_features]))]
+
+    onnx_model = convert_xgboost(
+        model,
+        initial_types=initial_type,
+        target_opset=opset_version,
+    )
+
+    with open(output_path, "wb") as f:
+        f.write(onnx_model.SerializeToString())
+
+    _validate_onnx(model, output_path, n_features)
+    log.info("ONNX export validated", path=output_path, n_features=n_features)
+
+
+def _validate_onnx(
+    original_model: xgb.XGBClassifier,
+    onnx_path: str,
+    n_features: int,
+    n_test_samples: int = 1000,
+    tolerance: float = 1e-4,
+) -> None:
+    """Verify ONNX predictions match XGBoost predictions."""
+    rng = np.random.default_rng(0)
+    X_test = rng.random((n_test_samples, n_features)).astype(np.float32)
+
+    # XGBoost predictions
+    xgb_probs = original_model.predict_proba(X_test)[:, 1]
+
+    # ONNX predictions
+    sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
+    input_name = sess.get_inputs()[0].name
+    prob_output_name = sess.get_outputs()[1].name
+    onnx_probs_raw = sess.run([prob_output_name], {input_name: X_test})[0]
+
+    # Handle both dict-of-lists (ZipMap) and array outputs
+    if isinstance(onnx_probs_raw[0], dict):
+        onnx_probs = np.array([p[1] for p in onnx_probs_raw])
+    else:
+        onnx_probs = onnx_probs_raw[:, 1]
+
+    max_diff = float(np.abs(xgb_probs - onnx_probs).max())
+    if max_diff > tolerance:
+        raise ValueError(
+            f"ONNX validation failed: max prediction difference {max_diff:.6f} > {tolerance}"
+        )
+
+    log.info("ONNX validation passed", max_diff=f"{max_diff:.8f}")

@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "realtime-ml-system"
+version = "0.1.0"
+description = "Real-Time ML System — Streaming Inference with sub-50ms p95 latency"
+requires-python = ">=3.12,<3.13"
+
+[tool.uv]
+python = "3.12"
+
+[tool.uv.workspace]
+members = [
+    "services/streaming",
+    "services/serving",
+    "services/feature-store",
+    "services/training",
+    "services/monitoring",
+    "services/load-testing",
+]
+
+# Critical: protobuf and pyarrow must be pinned for Feast + Ray compatibility
+[tool.uv.constraint-dependencies]
+protobuf = ">=4.21,<5.0"
+pyarrow = ">=16.0,<18.0"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["services"]
+addopts = "-v --tb=short"

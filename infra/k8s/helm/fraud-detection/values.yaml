@@ -1,0 +1,93 @@
+global:
+  environment: prod
+  image:
+    registry: ""
+    pullPolicy: IfNotPresent
+
+# ── Ray Serve ─────────────────────────────────────────────────────────────────
+rayServe:
+  enabled: true
+  image:
+    repository: fraud-ray
+    tag: "2.32"
+  replicas: 4
+  resources:
+    requests:
+      cpu: "2"
+      memory: "4Gi"
+    limits:
+      cpu: "4"
+      memory: "8Gi"
+  env:
+    ONNX_SESSION_POOL_SIZE: "4"
+    SHADOW_ENABLED: "true"
+    SHADOW_RATIO: "1.0"
+    FRAUD_THRESHOLD: "0.5"
+  nodeSelector:
+    workload: serving
+  tolerations:
+    - key: workload
+      value: serving
+      effect: NoSchedule
+
+# ── Horizontal Pod Autoscaler for Ray workers ─────────────────────────────────
+hpa:
+  enabled: true
+  minReplicas: 4
+  maxReplicas: 40
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# ── Flink ─────────────────────────────────────────────────────────────────────
+flink:
+  enabled: true
+  image:
+    repository: fraud-flink
+    tag: "1.19"
+  jobManager:
+    replicas: 1
+    resources:
+      requests:
+        cpu: "1"
+        memory: "2Gi"
+  taskManager:
+    replicas: 3
+    taskSlots: 4
+    resources:
+      requests:
+        cpu: "2"
+        memory: "4Gi"
+
+# ── Redis (Feast online store) ────────────────────────────────────────────────
+redis:
+  enabled: true  # set false to use external ElastiCache
+  auth:
+    enabled: false
+  master:
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+
+# ── MLflow ────────────────────────────────────────────────────────────────────
+mlflow:
+  enabled: true
+  image:
+    repository: ghcr.io/mlflow/mlflow
+    tag: "v2.14.1"
+  backendStore: "sqlite:///mlflow.db"  # override with postgresql in prod
+  artifactRoot: "s3://mlflow-artifacts/"
+
+# ── Monitoring ────────────────────────────────────────────────────────────────
+monitoring:
+  enabled: true
+  driftCheckIntervalMinutes: 15
+  driftShareThreshold: "0.30"
+  targetPsiThreshold: "0.25"
+
+# ── Kafka config ──────────────────────────────────────────────────────────────
+kafka:
+  bootstrapServers: ""  # Override with MSK endpoint or Redpanda address
+  topicRaw: transactions-raw
+  topicEnriched: transactions-enriched
+  topicScored: transactions-scored
