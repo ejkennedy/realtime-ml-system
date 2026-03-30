@@ -12,7 +12,7 @@ RUN pip install --no-cache-dir \
     "onnxruntime==1.18.1" \
     "numpy>=1.26,<2.0" \
     "feast[redis]==0.40.0" \
-    "redis>=5.0" \
+    "redis>=4.2.2,<5" \
     "pydantic>=2.7" \
     "prometheus-client>=0.20" \
     "structlog>=24.0" \

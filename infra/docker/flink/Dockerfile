@@ -7,10 +7,6 @@ RUN apt-get update && apt-get install -y \
     && ln -sf /usr/bin/python3.12 /usr/bin/python3 \
     && ln -sf /usr/bin/python3 /usr/bin/python
 
-# Install uv
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.cargo/bin:/root/.local/bin:$PATH"
-
 # Set Flink Python environment
 ENV PYFLINK_PYTHON=/usr/bin/python3
 
@@ -28,10 +24,15 @@ RUN curl -fSL https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-common/3.3
     -o /opt/flink/lib/hadoop-common.jar
 
 # Install PyFlink and Python deps
-WORKDIR /app/streaming
-COPY services/streaming/pyproject.toml ./pyproject.toml
-RUN pip3 install apache-flink==1.19.0 confluent-kafka pydantic redis pyarrow structlog python-dotenv feast
-
-COPY services/streaming/src ./src
+# Source code is mounted as a volume at runtime (/app/streaming) — no COPY needed
+RUN pip3 install --no-cache-dir \
+    apache-flink==1.19.0 \
+    confluent-kafka \
+    pydantic \
+    redis \
+    "pyarrow>=16.0,<18.0" \
+    structlog \
+    python-dotenv \
+    feast
 
 WORKDIR /opt/flink
