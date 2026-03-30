@@ -1,8 +1,9 @@
 FROM flink:1.19.1-scala_2.12-java11
 
-# Install Python 3 + pip (python3.12 not in Jammy default repos; python3.11 is fine for PyFlink)
+# Install Python 3, pip, and JDK (full JDK needed for pemja — apache-flink's
+# Java-Python bridge — which requires JDK headers to compile from source)
 RUN apt-get update && apt-get install -y \
-    python3 python3-dev python3-pip curl \
+    python3 python3-dev python3-pip curl default-jdk \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3 /usr/bin/python
 
@@ -22,16 +23,17 @@ RUN curl -fSL https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-flink-ru
 RUN curl -fSL https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-common/3.3.6/hadoop-common-3.3.6.jar \
     -o /opt/flink/lib/hadoop-common.jar
 
-# Install PyFlink and Python deps
-# Source code is mounted as a volume at runtime (/app/streaming) — no COPY needed
-RUN pip3 install --no-cache-dir \
-    apache-flink==1.19.0 \
-    confluent-kafka \
-    pydantic \
-    redis \
-    "pyarrow>=16.0,<18.0" \
-    structlog \
-    python-dotenv \
-    feast
+# Install PyFlink + deps. JAVA_HOME must point to the JDK (not JRE) so that
+# pemja can find the include/ headers. Derive it dynamically from javac.
+RUN export JAVA_HOME=$(dirname $(dirname $(readlink -f /usr/bin/javac))) && \
+    pip3 install --no-cache-dir \
+        apache-flink==1.19.0 \
+        confluent-kafka \
+        pydantic \
+        redis \
+        "pyarrow>=16.0,<18.0" \
+        structlog \
+        python-dotenv \
+        feast
 
 WORKDIR /opt/flink
