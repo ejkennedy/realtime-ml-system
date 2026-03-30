@@ -118,7 +118,7 @@ services:
       retries: 5
 
   minio-init:
-    image: minio/mc:RELEASE.2024-06-10T16-59-44Z
+    image: minio/mc:latest
     container_name: minio-init
     depends_on:
       minio:
