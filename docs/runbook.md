@@ -204,11 +204,17 @@ If p95 exceeds 50ms:
    ONNX_PROFILE_ENABLED=true make serve-perf
    ```
    Profiles will be written under `reports/onnx_profiles/`
-6. Check GC pressure:
+6. Capture a point-in-time scorer breakdown after the run:
+   ```bash
+   make perf-breakdown
+   ```
+   This writes `reports/perf_breakdown_*.md` with request-parse, feature-prep,
+   pool-wait, ONNX-run, and response-build summaries.
+7. Check GC pressure:
    ```bash
    docker stats ray-head  # watch memory usage patterns
    ```
-7. Run load test to profile at different concurrency levels:
+8. Run load test to profile at different concurrency levels:
    ```bash
    make load-test-local
    # Compare reports/load_test_summary_*.md across configs
@@ -231,6 +237,12 @@ Generates `reports/load_test_local_TIMESTAMP.html` with:
 
 The load test also writes a latency distribution PNG into `reports/` before exiting
 and a compact Markdown summary to `reports/load_test_summary_TIMESTAMP.md`.
+
+After a run, write the live scorer timing snapshot with:
+
+```bash
+make perf-breakdown
+```
 
 ### Stress Load Test
 

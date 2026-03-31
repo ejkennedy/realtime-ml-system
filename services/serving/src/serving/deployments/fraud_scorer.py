@@ -13,6 +13,7 @@ import queue
 import random
 import threading
 import time
+from collections import deque
 from datetime import datetime, timezone
 
 import msgspec
@@ -72,6 +73,11 @@ class FraudScorer:
     def __init__(self) -> None:
         self._pool = OnnxSessionPool(MODEL_PATH, pool_size=POOL_SIZE)
         self._model_version = self._get_model_version()
+        self._metrics_lock = threading.Lock()
+        self._request_parse_samples_ms: deque[float] = deque(maxlen=5000)
+        self._feature_prep_samples_ms: deque[float] = deque(maxlen=5000)
+        self._response_build_samples_ms: deque[float] = deque(maxlen=5000)
+        self._score_total_samples_ms: deque[float] = deque(maxlen=5000)
 
         self._online_updates_enabled = ONLINE_UPDATES_ENABLED
         self._online_update_sample_rate = ONLINE_UPDATE_SAMPLE_RATE
@@ -102,27 +108,36 @@ class FraudScorer:
 
     async def __call__(self, request: Request) -> ORJSONResponse:
         try:
+            parse_start = time.perf_counter()
             with observe_latency(request_parse_latency(), "primary"):
                 payload = decode_transaction_request(await request.body())
+            self._record_stage_sample(self._request_parse_samples_ms, time.perf_counter() - parse_start)
         except msgspec.DecodeError as exc:
             return ORJSONResponse({"error": f"invalid request payload: {exc}"}, status_code=400)
 
         response = await self.score(payload)
+        build_start = time.perf_counter()
         with observe_latency(response_build_latency(), "primary_http"):
-            return ORJSONResponse(score_response_to_dict(response))
+            body = score_response_to_dict(response)
+            http_response = ORJSONResponse(body)
+        self._record_stage_sample(self._response_build_samples_ms, time.perf_counter() - build_start)
+        return http_response
 
     async def score(self, payload: TransactionRequest) -> ScoreResponse:
         with track_inference(self._model_version, path="primary"):
             t0 = time.perf_counter()
 
+            feature_start = time.perf_counter()
             with observe_latency(feature_prep_latency(), "primary"):
                 features = self._prepare_features(payload)
+            self._record_stage_sample(self._feature_prep_samples_ms, time.perf_counter() - feature_start)
             fraud_score = self._pool.predict_proba(features)
             is_fraud = fraud_score >= FRAUD_THRESHOLD
 
             self._enqueue_online_update(is_fraud)
 
             elapsed_ms = (time.perf_counter() - t0) * 1000
+            self._record_stage_sample(self._score_total_samples_ms, elapsed_ms / 1000)
 
             self._ema_rate = self._ema_alpha * float(is_fraud) + (1 - self._ema_alpha) * self._ema_rate
             fraud_rate_gauge().set(self._ema_rate)
@@ -137,6 +152,24 @@ class FraudScorer:
                 model_version=self._model_version,
                 inference_latency_ms=round(elapsed_ms, 2),
             )
+
+    def get_perf_snapshot(self, finalize_profiles: bool = False) -> dict[str, object]:
+        profile_artifacts = self._pool.finalize_profiles() if finalize_profiles else []
+        onnx_summary = self._pool.get_perf_summary()
+        return {
+            "model_version": self._model_version,
+            "online_updates_enabled": self._online_updates_enabled,
+            "stage_latency_ms": {
+                "request_parse": self._summarize_stage_samples(self._request_parse_samples_ms),
+                "feature_prep": self._summarize_stage_samples(self._feature_prep_samples_ms),
+                "response_build": self._summarize_stage_samples(self._response_build_samples_ms),
+                "score_total": self._summarize_stage_samples(self._score_total_samples_ms),
+            },
+            "onnx": {
+                **onnx_summary,
+                "profile_artifacts": profile_artifacts or onnx_summary.get("profile_artifacts", []),
+            },
+        }
 
     def _prepare_features(self, payload: TransactionRequest) -> np.ndarray:
         """Fill the pre-allocated input buffer with feature values."""
@@ -264,6 +297,24 @@ class FraudScorer:
             return mv.version
         except Exception:
             return "local"
+
+    def _record_stage_sample(self, samples: deque[float], elapsed_s: float) -> None:
+        with self._metrics_lock:
+            samples.append(elapsed_s * 1000)
+
+    def _summarize_stage_samples(self, samples: deque[float]) -> dict[str, float | int | None]:
+        with self._metrics_lock:
+            values = np.asarray(list(samples), dtype=np.float64)
+        if values.size == 0:
+            return {"count": 0, "mean": None, "p50": None, "p95": None, "p99": None, "max": None}
+        return {
+            "count": int(values.size),
+            "mean": round(float(values.mean()), 2),
+            "p50": round(float(np.percentile(values, 50)), 2),
+            "p95": round(float(np.percentile(values, 95)), 2),
+            "p99": round(float(np.percentile(values, 99)), 2),
+            "max": round(float(values.max()), 2),
+        }
 
     def check_health(self) -> bool:
         return self._pool is not None

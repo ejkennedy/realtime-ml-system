@@ -1,6 +1,7 @@
 # Environment
 .env
 *.env.local
+.envrc
 
 # Python
 __pycache__/
@@ -11,6 +12,9 @@ __pycache__/
 .venv/
 venv/
 .uv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 *.egg-info/
 dist/
 build/
@@ -31,6 +35,10 @@ data/reference/
 reports/
 services/monitoring/src/monitoring/reports/
 
+# Ray local runtime state
+.ray_tmp/
+.raytmp/
+
 # Flink state
 infra/docker/flink-checkpoints/
 
@@ -49,3 +57,6 @@ infra/terraform/.terraform.lock.hcl
 
 # macOS
 .DS_Store
+
+# Feast local registry
+services/feature-store/src/feature_store/repo/registry/

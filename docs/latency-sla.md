@@ -129,9 +129,12 @@ If you need ONNX evidence:
 ```bash
 ONNX_PROFILE_ENABLED=true make serve-perf
 make smoke-test
+make perf-breakdown
 ```
 
 This writes ORT profile output under `reports/onnx_profiles/`.
+The perf breakdown command also writes `reports/perf_breakdown_*.md` so you can
+see whether p95 is dominated by parse/prep, session wait, or ONNX runtime.
 
 ## Quantized Model Note
 

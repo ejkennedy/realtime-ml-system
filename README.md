@@ -1,6 +1,33 @@
-# Real-Time ML System — Streaming Fraud Detection
+# Real-Time ML System
 
-Real-time fraud scoring with streaming features, ONNX serving, shadow deployment, concept drift detection, and online learning. The architecture target is sub-50ms p95 on tuned infrastructure; local laptop runs are primarily for functional validation and relative performance comparisons.
+A portfolio project that demonstrates an end-to-end real-time fraud-detection
+platform: streaming feature computation, Feast-backed online features, ONNX
+model serving on Ray Serve, shadow deployment, drift monitoring, and rollback
+workflow.
+
+The architecture target is sub-50ms p95 on tuned infrastructure. Local laptop
+runs are primarily for functional validation and relative performance
+comparisons, not proof of production SLA attainment.
+
+## Why This Project Exists
+
+This repo is designed to show practical ML platform engineering rather than
+just model training. It focuses on:
+
+- stateful streaming features with Flink
+- low-latency online inference with ONNX Runtime
+- model registry and promotion workflow with MLflow
+- shadow deployment and rollback patterns
+- measurable local performance tuning and tradeoff analysis
+
+## At A Glance
+
+- **Use case:** streaming fraud scoring
+- **Primary model:** XGBoost exported to ONNX
+- **Serving stack:** Ray Serve + ONNX Runtime
+- **Feature stack:** Flink + Feast + Redis
+- **Ops stack:** MLflow + Prometheus + Grafana + Evidently
+- **Deployment story:** local Docker Compose, with Kubernetes / Helm / Terraform scaffolding for production-style infrastructure
 
 ## Architecture
 
@@ -42,6 +69,15 @@ Transactions (synthetic / live)
 | Monitoring | Evidently AI, Prometheus, Grafana |
 | Online Learning | SGD micro-batches (scikit-learn), LinUCB contextual bandit |
 | Infra | Docker Compose (local), Kubernetes + Helm + Terraform (prod) |
+
+## Repository Guide
+
+- [README.md](/Users/ethan/Dev/realtime-ml-system/README.md): setup, architecture, and demo flow
+- [docs/architecture.md](/Users/ethan/Dev/realtime-ml-system/docs/architecture.md): serving/data-flow design choices
+- [docs/runbook.md](/Users/ethan/Dev/realtime-ml-system/docs/runbook.md): operational commands and troubleshooting
+- [docs/latency-sla.md](/Users/ethan/Dev/realtime-ml-system/docs/latency-sla.md): how to interpret the latency target and local benchmark results
+- [CONTRIBUTING.md](/Users/ethan/Dev/realtime-ml-system/CONTRIBUTING.md): contribution expectations
+- [SECURITY.md](/Users/ethan/Dev/realtime-ml-system/SECURITY.md): security reporting guidance
 
 ## Quick Start
 
@@ -147,6 +183,15 @@ make load-test-local
 To emit ONNX Runtime profiling traces during a run:
 `ONNX_PROFILE_ENABLED=true make serve-perf`
 
+To snapshot the live scorer stage timings after a run:
+
+```bash
+make perf-breakdown
+```
+
+This writes `reports/perf_breakdown_*.md`, combining the current scorer snapshot,
+pool / ONNX timing summaries, and the latest non-benchmark load-test summary.
+
 ## Key Design Decisions
 
 ### Sub-50ms p95 Latency
@@ -200,6 +245,7 @@ Two layers update without full retraining:
 
 - `make load-test-local`: lighter profile for laptop benchmarking and code-change comparisons
 - `make load-test`: aggressive stress profile intended to saturate the local stack
+- `make perf-breakdown`: captures a live scorer timing snapshot after a run
 - `bash scripts/benchmark_matrix.sh`: compares replica / session configurations side by side
 - if `models/registry/fraud_detector/latest/model.int8.onnx` exists, the benchmark matrix also includes a quantized `q_r1_s1` case
 
@@ -228,6 +274,7 @@ not expected to reproduce a production latency envelope.
 - `make serve-docker` only restarts the `ray-head` container from the Docker stack started by `make up`.
 - `make smoke-test` validates serving only; it does not require the Flink job or producer.
 - The full streaming demo needs both `make flink-job` and `make produce`.
+- Local Ray temp-dir pressure can distort results; if benchmarks look erratic, clean local Ray state and ensure enough free disk space before re-running.
 
 ## Prometheus Alerts
 
@@ -261,7 +308,7 @@ make drift-check
 
 ## Project Structure
 
-```
+```text
 realtime-ml-system/
 ├── services/
 │   ├── streaming/      PyFlink feature pipeline (velocity + enrichment)
@@ -269,11 +316,26 @@ realtime-ml-system/
 │   ├── feature-store/  Feast definitions, Redis materialisation
 │   ├── training/       XGBoost + ONNX export + online learning
 │   ├── monitoring/     Evidently drift detection + retraining trigger
-│   └── load-testing/   Locust 10k req/s + latency distribution plots
+│   └── load-testing/   Locust load tests and latency reports
 ├── infra/
-│   ├── docker/         docker-compose + Dockerfiles + Prometheus config
-│   ├── k8s/helm/       Helm chart with HPA + PDB
-│   └── terraform/      EKS + MSK + ElastiCache + S3 modules
-├── scripts/            Bootstrap, smoke test, rollback, producer
-└── data/               Synthetic data generation
+│   ├── docker/         Docker Compose, Dockerfiles, local observability
+│   ├── k8s/helm/       Helm chart and production-style manifests
+│   └── terraform/      Infrastructure modules
+├── scripts/            Bootstrap, smoke test, rollback, producer, benchmarks
+├── docs/               Architecture, runbook, and latency notes
+└── data/               Synthetic data generation assets
 ```
+
+## Public Launch Checklist
+
+For a clean public clone, the repo now includes:
+
+- open-source license
+- contribution and security guidance
+- GitHub issue / PR templates
+- CI that installs dependencies and compiles the Python source tree
+- ignore rules for local reports, Ray state, and Feast registry artifacts
+
+## License
+
+Released under the MIT License. See [LICENSE](/Users/ethan/Dev/realtime-ml-system/LICENSE).

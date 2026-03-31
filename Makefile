@@ -1,4 +1,4 @@
-.PHONY: help up down logs topics feast-apply feast-materialize train train-quick serve serve-perf serve-perf-quantized load-test load-test-local load-test-stress drift-check rollback clean
+.PHONY: help up down logs topics feast-apply feast-materialize train train-quick serve serve-perf serve-perf-quantized load-test load-test-local load-test-stress perf-breakdown drift-check rollback clean
 
 COMPOSE = docker compose -f infra/docker/docker-compose.yml
 UV = uv
@@ -143,6 +143,10 @@ load-test-ui: ## Run Locust with web UI
 	$(UV) run --package load-testing locust \
 		-f services/load-testing/src/load_testing/locustfile.py \
 		--host http://localhost:8000
+
+perf-breakdown: ## Snapshot live scorer stage timings into a Markdown artifact
+	mkdir -p reports
+	$(UV) run python scripts/perf_breakdown.py --finalize-profiles
 
 latency-plot: ## Latency plots are generated automatically during load-test
 	@echo "Run 'make load-test' to generate HTML and latency plots in ./reports."

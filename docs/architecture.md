@@ -121,6 +121,9 @@ If p95 is high, the first question is no longer “is the model slow?” but:
 - is ORT runtime dominating?
 - are background system effects, like Ray spill pressure, distorting the run?
 
+For local diagnostics, `make perf-breakdown` snapshots those stage summaries from
+the live `FraudScorer` deployment into `reports/perf_breakdown_*.md`.
+
 ## Local Benchmark Reality
 
 The repo contains multiple load-test summaries and benchmark matrices in
