@@ -39,6 +39,11 @@ leaving them buried in `reports/` or MLflow:
 | Local latency benchmark | Best published laptop config is `r1_s1` at `231.77 ms` p95, `273.11 ms` p99, `174.05` avg RPS |
 | Model quality snapshot | Quick synthetic eval on March 31, 2026: `1.0000` ROC AUC and `1.0000` PR AUC on 6000 samples |
 
+The perfect AUC values reflect the synthetic generator's intentionally separable
+fraud patterns rather than a claim that the model is solved on real data; see
+[docs/model-card.md](/Users/ethan/Dev/realtime-ml-system/docs/model-card.md) for
+operating-point examples and limits.
+
 Details:
 
 - [docs/benchmark-results.md](/Users/ethan/Dev/realtime-ml-system/docs/benchmark-results.md)

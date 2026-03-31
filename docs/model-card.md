@@ -29,7 +29,9 @@ Results:
 | Validation PR AUC | 1.0000 |
 
 These values are intentionally labelled as synthetic-data validation, not as a
-claim about real production fraud performance.
+claim about real production fraud performance. The perfect AUC scores reflect
+the synthetic generator's label distribution and intentionally separable fraud
+patterns, not a claim that real-world fraud is linearly clean or fully solved.
 
 ## Feature Importance
 
