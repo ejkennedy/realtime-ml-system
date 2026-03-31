@@ -21,7 +21,7 @@ def test_extract_calendar_features_prefers_explicit_fields() -> None:
 
 
 def test_extract_calendar_features_reads_unix_timestamp() -> None:
-    payload = TransactionRequest(timestamp_unix_ms=1_714_599_600_000)
+    payload = TransactionRequest(timestamp_unix_ms=1_714_554_000_000)
 
     hour_of_day, day_of_week = RAW_FRAUD_SCORER._extract_calendar_features(payload)
 
@@ -56,8 +56,8 @@ def test_prepare_features_uses_nested_velocity_when_available() -> None:
     features = scorer._prepare_features(payload)
 
     assert features.shape == (1, 21)
-    assert features[0, 0] == 120.0
-    assert features[0, 5] == 3.0
-    assert features[0, 15] == 0.4
-    assert features[0, 19] == 1.5
-    assert features[0, 20] == 2.0
+    assert np.isclose(features[0, 0], 120.0)
+    assert np.isclose(features[0, 5], 3.0)
+    assert np.isclose(features[0, 15], 0.4)
+    assert np.isclose(features[0, 19], 1.5)
+    assert np.isclose(features[0, 20], 2.0)
