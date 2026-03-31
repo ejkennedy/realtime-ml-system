@@ -29,6 +29,22 @@ just model training. It focuses on:
 - **Ops stack:** MLflow + Prometheus + Grafana + Evidently
 - **Deployment story:** local Docker Compose, with Kubernetes / Helm / Terraform scaffolding for production-style infrastructure
 
+## Published Results
+
+The repo now includes committed benchmark and model-quality artifacts instead of
+leaving them buried in `reports/` or MLflow:
+
+| Area | Published snapshot |
+|---|---|
+| Local latency benchmark | Best published laptop config is `r1_s1` at `231.77 ms` p95, `273.11 ms` p99, `174.05` avg RPS |
+| Model quality snapshot | Quick synthetic eval on March 31, 2026: `1.0000` ROC AUC and `1.0000` PR AUC on 6000 samples |
+
+Details:
+
+- [docs/benchmark-results.md](/Users/ethan/Dev/realtime-ml-system/docs/benchmark-results.md)
+- [docs/model-card.md](/Users/ethan/Dev/realtime-ml-system/docs/model-card.md)
+- [docs/feature-schema.md](/Users/ethan/Dev/realtime-ml-system/docs/feature-schema.md)
+
 ## Architecture
 
 ```
@@ -76,6 +92,9 @@ Transactions (synthetic / live)
 - [docs/architecture.md](/Users/ethan/Dev/realtime-ml-system/docs/architecture.md): serving/data-flow design choices
 - [docs/runbook.md](/Users/ethan/Dev/realtime-ml-system/docs/runbook.md): operational commands and troubleshooting
 - [docs/latency-sla.md](/Users/ethan/Dev/realtime-ml-system/docs/latency-sla.md): how to interpret the latency target and local benchmark results
+- [docs/benchmark-results.md](/Users/ethan/Dev/realtime-ml-system/docs/benchmark-results.md): committed local benchmark numbers and replica/session tradeoffs
+- [docs/model-card.md](/Users/ethan/Dev/realtime-ml-system/docs/model-card.md): model-quality snapshot, top features, ROC/PR operating points
+- [docs/feature-schema.md](/Users/ethan/Dev/realtime-ml-system/docs/feature-schema.md): request payload contract, partitions, and ONNX feature order
 - [CONTRIBUTING.md](/Users/ethan/Dev/realtime-ml-system/CONTRIBUTING.md): contribution expectations
 - [SECURITY.md](/Users/ethan/Dev/realtime-ml-system/SECURITY.md): security reporting guidance
 
@@ -138,6 +157,13 @@ make smoke-test
 
 Run `make smoke-test` from a second terminal while `make serve` is still running.
 
+For fast repo validation without the full stack:
+
+```bash
+make test
+make eval-quick
+```
+
 ### 7. Start the streaming path
 
 ```bash
@@ -192,6 +218,9 @@ make perf-breakdown
 This writes `reports/perf_breakdown_*.md`, combining the current scorer snapshot,
 pool / ONNX timing summaries, and the latest non-benchmark load-test summary.
 
+Published benchmark numbers and the replica/session tradeoff discussion are in
+[docs/benchmark-results.md](/Users/ethan/Dev/realtime-ml-system/docs/benchmark-results.md).
+
 ## Key Design Decisions
 
 ### Sub-50ms p95 Latency
@@ -204,6 +233,11 @@ Five patterns work together to approach the SLA:
 4. **Bounded concurrency** — local defaults use one scorer replica / one ONNX session to avoid CPU oversubscription
 5. **Background GC + off-path updates** — ONNX sessions avoid stop-the-world GC, and online updates are queued off the request path
 6. **Optional int8 ONNX path** — training emits a quantized model variant for benchmarking CPU inference tradeoffs
+
+The committed local benchmark results currently do **not** hit the `50 ms` p95
+target on laptop hardware. The published best local config is `231.77 ms` p95,
+which is why the README and SLA doc describe the target as an architecture goal
+rather than an achieved local guarantee.
 
 ### Exactly-Once Semantics
 
@@ -238,6 +272,13 @@ New model goes to shadow deployment first — no auto-promotion without human ap
 Two layers update without full retraining:
 
 1. **SGD adapter** — `SGDClassifier.partial_fit()` on 100-item micro-batches from Redis queue. Updates every ~0.5s, serialised back to Redis. All Ray workers reload periodically.
+
+## Infra Status
+
+Docker Compose is the primary verified local path in this repository. The Helm
+chart and Terraform directories are scaffolding for production-style deployment
+layout, but they are not continuously exercised in CI and should be treated as
+templates, not as a claimed turnkey production environment.
 
 2. **LinUCB bandit** — adapts the fraud decision threshold per `(merchant_category, hour_bucket)` context. Learns from delayed labels (actual fraud outcomes) with asymmetric rewards: false negatives penalised 4× more than false positives.
 

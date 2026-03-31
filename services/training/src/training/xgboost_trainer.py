@@ -21,8 +21,10 @@ import xgboost as xgb
 from sklearn.metrics import (
     average_precision_score,
     f1_score,
+    precision_recall_curve,
     precision_score,
     recall_score,
+    roc_curve,
     roc_auc_score,
 )
 from sklearn.model_selection import StratifiedKFold
@@ -64,13 +66,22 @@ class XGBoostTrainer:
         model_name: str = "fraud-detector",
         output_dir: str = "./models/registry",
     ) -> None:
-        mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI", "http://localhost:5001"))
+        tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
+        if not tracking_uri:
+            tracking_uri = f"file:{(Path.cwd() / 'mlruns').resolve()}"
+        mlflow.set_tracking_uri(tracking_uri)
         mlflow.set_experiment(experiment_name)
         self._model_name = model_name
         self._output_dir = Path(output_dir)
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
-    def train(self, df: pd.DataFrame, register: bool = True) -> tuple[xgb.XGBClassifier, dict]:
+    def train(
+        self,
+        df: pd.DataFrame,
+        register: bool = True,
+        export_onnx: bool = True,
+        artifact_dir: str | Path | None = None,
+    ) -> tuple[xgb.XGBClassifier, dict]:
         X = df[FEATURE_COLS].values.astype(np.float32)
         y = df[TARGET_COL].values
 
@@ -111,11 +122,22 @@ class XGBoostTrainer:
                 mlflow.log_metric(k, round(v, 4))
             log.info("Validation metrics", **{k: round(v, 4) for k, v in val_metrics.items()})
 
-            # Export to ONNX
-            onnx_path, quantized_onnx_path = self._export_onnx(model, run.info.run_id)
-            mlflow.log_artifact(str(onnx_path), artifact_path="model")
-            if quantized_onnx_path is not None and quantized_onnx_path.exists():
-                mlflow.log_artifact(str(quantized_onnx_path), artifact_path="model")
+            eval_dir = self._resolve_artifact_dir(run.info.run_id, artifact_dir)
+            artifact_paths = self._write_evaluation_artifacts(
+                model=model,
+                y_val=y_val,
+                val_preds=val_preds,
+                val_metrics=val_metrics,
+                fraud_rate=float(y.mean()),
+                artifact_dir=eval_dir,
+            )
+            mlflow.log_artifacts(str(eval_dir), artifact_path="evaluation")
+
+            if export_onnx:
+                onnx_path, quantized_onnx_path = self._export_onnx(model, run.info.run_id)
+                mlflow.log_artifact(str(onnx_path), artifact_path="model")
+                if quantized_onnx_path is not None and quantized_onnx_path.exists():
+                    mlflow.log_artifact(str(quantized_onnx_path), artifact_path="model")
 
             # Log sklearn-style model for MLflow model registry
             mlflow.xgboost.log_model(
@@ -132,7 +154,13 @@ class XGBoostTrainer:
                 mlflow.log_param("registered_version", mv.version)
                 log.info("Model registered as staging", version=mv.version)
 
-            return model, {**cv_metrics, **val_metrics, "run_id": run.info.run_id}
+            return model, {
+                **cv_metrics,
+                **val_metrics,
+                "run_id": run.info.run_id,
+                "evaluation_artifact_dir": str(eval_dir),
+                **artifact_paths,
+            }
 
     def _cross_validate(self, X: np.ndarray, y: np.ndarray) -> dict:
         skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
@@ -174,3 +202,155 @@ class XGBoostTrainer:
 
         log.info("ONNX model exported", path=str(onnx_path))
         return onnx_path, quantized_onnx_path if quantized_onnx_path.exists() else None
+
+    def _resolve_artifact_dir(self, run_id: str, artifact_dir: str | Path | None) -> Path:
+        if artifact_dir is not None:
+            path = Path(artifact_dir)
+        else:
+            path = self._output_dir / f"fraud_detector/{run_id}/evaluation"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _write_evaluation_artifacts(
+        self,
+        model: xgb.XGBClassifier,
+        y_val: np.ndarray,
+        val_preds: np.ndarray,
+        val_metrics: dict[str, float],
+        fraud_rate: float,
+        artifact_dir: Path,
+    ) -> dict[str, str]:
+        feature_importance_path = artifact_dir / "feature_importance.csv"
+        roc_curve_path = artifact_dir / "roc_curve.csv"
+        pr_curve_path = artifact_dir / "precision_recall_curve.csv"
+        model_card_path = artifact_dir / "model_card.md"
+
+        importance_df = pd.DataFrame(
+            {
+                "feature": FEATURE_COLS,
+                "importance": model.feature_importances_,
+            }
+        ).sort_values("importance", ascending=False)
+        importance_df.to_csv(feature_importance_path, index=False)
+
+        fpr, tpr, roc_thresholds = roc_curve(y_val, val_preds)
+        pd.DataFrame(
+            {
+                "fpr": fpr,
+                "tpr": tpr,
+                "threshold": roc_thresholds,
+            }
+        ).to_csv(roc_curve_path, index=False)
+
+        precision, recall, pr_thresholds = precision_recall_curve(y_val, val_preds)
+        pr_thresholds = np.append(pr_thresholds, np.nan)
+        pd.DataFrame(
+            {
+                "precision": precision,
+                "recall": recall,
+                "threshold": pr_thresholds,
+            }
+        ).to_csv(pr_curve_path, index=False)
+
+        top_features = importance_df.head(5)
+        model_card_path.write_text(
+            "\n".join(
+                [
+                    "# Fraud Detector Model Card",
+                    "",
+                    "## Summary",
+                    f"- Model family: `XGBoost binary:logistic`",
+                    f"- Validation ROC AUC: `{val_metrics['val_auc']:.4f}`",
+                    f"- Validation PR AUC: `{val_metrics['val_aucpr']:.4f}`",
+                    f"- Validation precision @0.5: `{val_metrics['val_precision']:.4f}`",
+                    f"- Validation recall @0.5: `{val_metrics['val_recall']:.4f}`",
+                    f"- Validation F1 @0.5: `{val_metrics['val_f1']:.4f}`",
+                    f"- Training fraud rate: `{fraud_rate:.4f}`",
+                    "",
+                    "## Top Features",
+                    *[
+                        f"- `{row.feature}`: `{row.importance:.4f}`"
+                        for row in top_features.itertuples(index=False)
+                    ],
+                    "",
+                    "## Artifact Files",
+                    "- `feature_importance.csv`",
+                    "- `roc_curve.csv`",
+                    "- `precision_recall_curve.csv`",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        plot_paths = self._write_plots(
+            importance_df=importance_df,
+            roc_curve_path=roc_curve_path,
+            pr_curve_path=pr_curve_path,
+            artifact_dir=artifact_dir,
+            val_metrics=val_metrics,
+        )
+
+        return {
+            "feature_importance_csv": str(feature_importance_path),
+            "roc_curve_csv": str(roc_curve_path),
+            "precision_recall_curve_csv": str(pr_curve_path),
+            "model_card_md": str(model_card_path),
+            **plot_paths,
+        }
+
+    def _write_plots(
+        self,
+        importance_df: pd.DataFrame,
+        roc_curve_path: Path,
+        pr_curve_path: Path,
+        artifact_dir: Path,
+        val_metrics: dict[str, float],
+    ) -> dict[str, str]:
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError:
+            log.warning("matplotlib not installed; skipping training plots")
+            return {}
+
+        feature_plot = artifact_dir / "feature_importance.png"
+        roc_plot = artifact_dir / "roc_curve.png"
+        pr_plot = artifact_dir / "precision_recall_curve.png"
+
+        top_df = importance_df.head(10).iloc[::-1]
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.barh(top_df["feature"], top_df["importance"], color="#1f77b4")
+        ax.set_title("Top Feature Importances")
+        ax.set_xlabel("Gain")
+        fig.tight_layout()
+        fig.savefig(feature_plot, dpi=180)
+        plt.close(fig)
+
+        roc_df = pd.read_csv(roc_curve_path)
+        fig, ax = plt.subplots(figsize=(6, 6))
+        ax.plot(roc_df["fpr"], roc_df["tpr"], label=f"ROC AUC = {val_metrics['val_auc']:.3f}")
+        ax.plot([0, 1], [0, 1], linestyle="--", color="#777777")
+        ax.set_xlabel("False Positive Rate")
+        ax.set_ylabel("True Positive Rate")
+        ax.set_title("ROC Curve")
+        ax.legend(loc="lower right")
+        fig.tight_layout()
+        fig.savefig(roc_plot, dpi=180)
+        plt.close(fig)
+
+        pr_df = pd.read_csv(pr_curve_path)
+        fig, ax = plt.subplots(figsize=(6, 6))
+        ax.plot(pr_df["recall"], pr_df["precision"], label=f"PR AUC = {val_metrics['val_aucpr']:.3f}")
+        ax.set_xlabel("Recall")
+        ax.set_ylabel("Precision")
+        ax.set_title("Precision-Recall Curve")
+        ax.legend(loc="lower left")
+        fig.tight_layout()
+        fig.savefig(pr_plot, dpi=180)
+        plt.close(fig)
+
+        return {
+            "feature_importance_png": str(feature_plot),
+            "roc_curve_png": str(roc_plot),
+            "precision_recall_curve_png": str(pr_plot),
+        }

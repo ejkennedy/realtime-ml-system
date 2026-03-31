@@ -1,4 +1,4 @@
-.PHONY: help up down logs topics feast-apply feast-materialize train train-quick serve serve-perf serve-perf-quantized load-test load-test-local load-test-stress perf-breakdown drift-check rollback clean
+.PHONY: help up down logs topics feast-apply feast-materialize train train-quick eval-quick test serve serve-perf serve-perf-quantized load-test load-test-local load-test-stress perf-breakdown drift-check rollback clean
 
 COMPOSE = docker compose -f infra/docker/docker-compose.yml
 UV = uv
@@ -56,6 +56,13 @@ train: ## Train XGBoost model and export to ONNX
 
 train-quick: ## Quick training run (50k samples)
 	$(UV) run --package training python -m training.pipeline --n-samples 50000
+
+eval-quick: ## Fast model quality gate for CI/local checks
+	mkdir -p reports/ci_eval
+	$(UV) run --package training python scripts/eval_quick.py --artifact-dir reports/ci_eval
+
+test: ## Run the fast unit test suite
+	$(UV) run pytest
 
 # ── Serving ───────────────────────────────────────────────────────────────────
 

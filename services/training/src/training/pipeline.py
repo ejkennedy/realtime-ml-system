@@ -25,6 +25,7 @@ load_dotenv()
 @click.option("--trigger", default="manual", help="Trigger reason (manual|drift|scheduled)")
 @click.option("--auto-promote", is_flag=True, default=False, help="Skip shadow window and auto-promote")
 @click.option("--register/--no-register", default=True, show_default=True)
+@click.option("--export-onnx/--no-export-onnx", default=True, show_default=True)
 def main(
     n_samples: int,
     fraud_rate: float,
@@ -32,6 +33,7 @@ def main(
     trigger: str,
     auto_promote: bool,
     register: bool,
+    export_onnx: bool,
 ) -> None:
     import mlflow
 
@@ -48,7 +50,7 @@ def main(
 
     from training.xgboost_trainer import XGBoostTrainer
     trainer = XGBoostTrainer()
-    model, metrics = trainer.train(df, register=register)
+    model, metrics = trainer.train(df, register=register, export_onnx=export_onnx)
 
     log.info("Training complete", **{k: v for k, v in metrics.items() if k != "run_id"})
 

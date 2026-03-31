@@ -21,10 +21,18 @@ jobs:
           python-version: "3.12"
 
       - name: Sync dependencies
-        run: uv sync --frozen
+        run: uv sync --all-packages --all-extras --frozen
 
       - name: Compile Python sources
         run: uv run python -m compileall services scripts
+
+      - name: Run unit tests
+        run: uv run pytest
+
+      - name: Run quick evaluation gate
+        env:
+          MLFLOW_TRACKING_URI: file:${{ github.workspace }}/mlruns
+        run: uv run --package training python scripts/eval_quick.py --n-samples 6000 --artifact-dir reports/ci_eval
 
       - name: Verify documentation files exist
         run: |
@@ -32,3 +40,6 @@ jobs:
           test -f LICENSE
           test -f CONTRIBUTING.md
           test -f SECURITY.md
+          test -f docs/benchmark-results.md
+          test -f docs/model-card.md
+          test -f docs/feature-schema.md
