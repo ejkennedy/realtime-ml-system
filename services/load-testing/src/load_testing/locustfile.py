@@ -1,12 +1,12 @@
 """
-Locust load test: 10k events/sec fraud inference endpoint.
+Locust load test for the fraud inference endpoint.
 
 Run:
     locust -f locustfile.py --host http://localhost:8000 \
            --users 200 --spawn-rate 20 --run-time 5m \
            --headless --html report.html
 
-Profile at different concurrency levels to find the p95 < 50ms operating point.
+Use the env-configured shape to compare local baseline vs stress profiles.
 """
 
 from __future__ import annotations
@@ -28,6 +28,8 @@ from load_testing.latency_report import plot_distribution, write_markdown_summar
 RNG = np.random.default_rng()
 _gen = TransactionGenerator()
 LATENCY_FAIL_THRESHOLD_MS = float(os.environ.get("LOAD_TEST_LATENCY_FAIL_THRESHOLD_MS", "0"))
+LOAD_TEST_LABEL = os.environ.get("LOAD_TEST_LABEL", "locust")
+LOAD_TEST_ARTIFACT_STEM = os.environ.get("LOAD_TEST_ARTIFACT_STEM", "")
 LOAD_TEST_STAGE1_DURATION_S = int(os.environ.get("LOAD_TEST_STAGE1_DURATION_S", 60))
 LOAD_TEST_STAGE1_USERS = int(os.environ.get("LOAD_TEST_STAGE1_USERS", 50))
 LOAD_TEST_STAGE1_SPAWN_RATE = int(os.environ.get("LOAD_TEST_STAGE1_SPAWN_RATE", 5))
@@ -37,6 +39,7 @@ LOAD_TEST_STAGE2_SPAWN_RATE = int(os.environ.get("LOAD_TEST_STAGE2_SPAWN_RATE", 
 LOAD_TEST_STAGE3_DURATION_S = int(os.environ.get("LOAD_TEST_STAGE3_DURATION_S", 360))
 LOAD_TEST_STAGE3_USERS = int(os.environ.get("LOAD_TEST_STAGE3_USERS", 0))
 LOAD_TEST_STAGE3_SPAWN_RATE = int(os.environ.get("LOAD_TEST_STAGE3_SPAWN_RATE", 50))
+LOAD_TEST_SLA_MS = float(os.environ.get("LOAD_TEST_SLA_MS", "50"))
 
 
 class FraudScorerUser(HttpUser):
@@ -102,19 +105,20 @@ def on_quitting(environment, **kwargs):
     reports_dir = Path("./reports")
     reports_dir.mkdir(parents=True, exist_ok=True)
     timestamp = int(time.time())
-    plot_path = reports_dir / f"latency_locust_{timestamp}.png"
-    summary_path = reports_dir / f"load_test_summary_{timestamp}.md"
+    stem = LOAD_TEST_ARTIFACT_STEM or str(timestamp)
+    plot_path = reports_dir / f"latency_{stem}.png"
+    summary_path = reports_dir / f"load_test_summary_{stem}.md"
 
-    plot_distribution(label="locust", output_path=str(plot_path))
+    plot_distribution(label=LOAD_TEST_LABEL, output_path=str(plot_path))
 
     total = environment.stats.total
     write_markdown_summary(
         str(summary_path),
-        label="locust",
+        label=LOAD_TEST_LABEL,
         total_requests=total.num_requests,
         total_failures=total.num_failures,
         avg_rps=total.total_rps,
-        sla_ms=50.0,
+        sla_ms=LOAD_TEST_SLA_MS,
     )
 
 

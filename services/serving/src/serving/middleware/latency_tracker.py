@@ -52,6 +52,36 @@ def onnx_latency() -> Histogram:
 
 
 @lru_cache(maxsize=1)
+def request_parse_latency() -> Histogram:
+    return Histogram(
+        "fraud_request_parse_duration_seconds",
+        "Request JSON parsing latency",
+        buckets=[0.0001, 0.0005, 0.001, 0.002, 0.005, 0.010, 0.020],
+        labelnames=["path"],
+    )
+
+
+@lru_cache(maxsize=1)
+def feature_prep_latency() -> Histogram:
+    return Histogram(
+        "fraud_feature_prep_duration_seconds",
+        "Feature preparation latency",
+        buckets=[0.0001, 0.0005, 0.001, 0.002, 0.005, 0.010, 0.020],
+        labelnames=["path"],
+    )
+
+
+@lru_cache(maxsize=1)
+def response_build_latency() -> Histogram:
+    return Histogram(
+        "fraud_response_build_duration_seconds",
+        "Response construction latency",
+        buckets=[0.0001, 0.0005, 0.001, 0.002, 0.005, 0.010],
+        labelnames=["path"],
+    )
+
+
+@lru_cache(maxsize=1)
 def requests_total() -> Counter:
     return Counter(
         "fraud_requests_total",
@@ -92,6 +122,32 @@ def shadow_timeout_counter() -> Counter:
         "fraud_shadow_timeouts_total",
         "Number of shadow inference timeouts (fire-and-forget path)",
     )
+
+
+@lru_cache(maxsize=1)
+def online_update_enqueued() -> Counter:
+    return Counter(
+        "fraud_online_update_enqueued_total",
+        "Online update examples accepted into the local queue",
+    )
+
+
+@lru_cache(maxsize=1)
+def online_update_dropped() -> Counter:
+    return Counter(
+        "fraud_online_update_dropped_total",
+        "Online update examples dropped before enqueue",
+        labelnames=["reason"],
+    )
+
+
+@contextmanager
+def observe_latency(metric: Histogram, *labels: str) -> Iterator[None]:
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        metric.labels(*labels).observe(time.perf_counter() - start)
 
 
 @contextmanager

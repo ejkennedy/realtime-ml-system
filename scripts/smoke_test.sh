@@ -13,6 +13,9 @@ echo ""
 PAYLOAD='{
   "event_id": "smoke-test-001",
   "timestamp": "'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'",
+  "timestamp_unix_ms": '"$(($(date +%s) * 1000))"',
+  "hour_of_day": '"$((10#$(date -u +%H)))"',
+  "day_of_week": '"$(($(date -u +%u) - 1))"',
   "card_id": "card_000001",
   "merchant_id": "merch_0001",
   "merchant_category": "online",
@@ -26,6 +29,9 @@ PAYLOAD='{
     "amount_sum_1h": 300.0, "amount_avg_1h": 60.0, "amount_max_1h": 149.99,
     "amount_sum_24h": 850.0, "distinct_merchants_1h": 2, "distinct_countries_1h": 1
   },
+  "velocity_tx_count_1m": 1, "velocity_tx_count_5m": 2, "velocity_tx_count_1h": 5, "velocity_tx_count_24h": 12,
+  "velocity_amount_sum_1h": 300.0, "velocity_amount_avg_1h": 60.0, "velocity_amount_max_1h": 149.99,
+  "velocity_amount_sum_24h": 850.0, "velocity_distinct_merchants_1h": 2, "velocity_distinct_countries_1h": 1,
   "card_risk_score": 0.1, "merchant_fraud_rate_30d": 0.01,
   "merchant_avg_amount": 55.0, "card_avg_spend_30d": 65.0
 }'

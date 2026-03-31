@@ -1,6 +1,6 @@
 # Real-Time ML System — Streaming Fraud Detection
 
-Sub-50ms p95 online fraud detection at 10k events/sec. Demonstrates production-grade MLOps patterns: streaming feature engineering, ONNX serving, shadow deployment, concept drift detection, and online learning.
+Real-time fraud scoring with streaming features, ONNX serving, shadow deployment, concept drift detection, and online learning. The architecture target is sub-50ms p95 on tuned infrastructure; local laptop runs are primarily for functional validation and relative performance comparisons.
 
 ## Architecture
 
@@ -71,7 +71,9 @@ This starts: Redpanda, Flink, Ray, Redis, MLflow, MinIO, Prometheus, Grafana.
 make train
 ```
 
-Generates 500k synthetic transactions, trains XGBoost, exports to ONNX, registers in MLflow.
+Generates 500k synthetic transactions, trains XGBoost, exports FP32 ONNX, attempts
+an int8 quantized ONNX variant when the graph supports ORT quantization, and
+registers in MLflow.
 
 ### 4. Apply feature store
 
@@ -107,15 +109,16 @@ make flink-job      # submit the PyFlink feature pipeline
 make produce        # emit synthetic transactions into Redpanda
 ```
 
-### 8. Run load test (10k req/s)
+### 8. Run load tests
 
 ```bash
-make load-test
+make load-test-local   # recommended local baseline
+make load-test         # aggressive stress profile
 ```
 
-Results saved to `reports/load_test_TIMESTAMP.html`.
+Results are saved to `reports/load_test_*.html`.
 Latency distribution PNGs are generated alongside the HTML report in `reports/`.
-Each run also writes a compact Markdown summary to `reports/load_test_summary_TIMESTAMP.md`.
+Each run also writes a compact Markdown summary to `reports/load_test_summary_*.md`.
 By default, slow 200 responses are kept as successes so the report reflects
 actual HTTP failure rate. To make latency breaches fail the run, set
 `LOAD_TEST_LATENCY_FAIL_THRESHOLD_MS`, for example:
@@ -129,19 +132,33 @@ make load-test-local
 ```
 
 `make serve-perf` disables shadow traffic and the version manager, and uses fewer
-Ray replicas / ONNX sessions to reduce local CPU oversubscription.
+Ray replicas / ONNX sessions to reduce local CPU oversubscription. It also uses a
+short dedicated Ray temp directory, bypasses the router when shadowing is off, and
+disables online-update writes so you can measure the scoring path rather than
+background MLOps overhead.
+
+To benchmark the quantized model path:
+
+```bash
+make serve-perf-quantized
+make load-test-local
+```
+
+To emit ONNX Runtime profiling traces during a run:
+`ONNX_PROFILE_ENABLED=true make serve-perf`
 
 ## Key Design Decisions
 
 ### Sub-50ms p95 Latency
 
-Five patterns work together to hit the SLA:
+Five patterns work together to approach the SLA:
 
 1. **Pre-warmed ONNX session pool** — sessions created at startup, never on request path
-2. **Pre-allocated numpy buffer** — `input_buffer = np.zeros(...)` reused per request, avoids GC
-3. **Redis pipelining** — card + merchant features fetched in single round-trip (~1ms vs ~5ms)
-4. **`max_concurrent_queries` = pool size** — no Ray internal queue buildup
-5. **Background GC** — `gc.disable()` on inference threads, 30s background collection
+2. **Typed request decoding** — `msgspec` decodes request bytes into a fixed schema, avoiding repeated dict lookups and JSON object churn
+3. **Direct perf path** — local perf mode binds HTTP directly to `FraudScorer` when shadowing is off
+4. **Bounded concurrency** — local defaults use one scorer replica / one ONNX session to avoid CPU oversubscription
+5. **Background GC + off-path updates** — ONNX sessions avoid stop-the-world GC, and online updates are queued off the request path
+6. **Optional int8 ONNX path** — training emits a quantized model variant for benchmarking CPU inference tradeoffs
 
 ### Exactly-Once Semantics
 
@@ -179,17 +196,16 @@ Two layers update without full retraining:
 
 2. **LinUCB bandit** — adapts the fraud decision threshold per `(merchant_category, hour_bucket)` context. Learns from delayed labels (actual fraud outcomes) with asymmetric rewards: false negatives penalised 4× more than false positives.
 
-## Load Test Results (Example)
+## Load Testing Modes
 
-| Metric | Value | SLA |
-|--------|-------|-----|
-| p50 latency | ~8ms | — |
-| p95 latency | ~28ms | <50ms ✓ |
-| p99 latency | ~41ms | — |
-| Throughput | 12,400 req/s | 10k ✓ |
-| Error rate | 0.00% | <0.1% ✓ |
+- `make load-test-local`: lighter profile for laptop benchmarking and code-change comparisons
+- `make load-test`: aggressive stress profile intended to saturate the local stack
+- `bash scripts/benchmark_matrix.sh`: compares replica / session configurations side by side
+- if `models/registry/fraud_detector/latest/model.int8.onnx` exists, the benchmark matrix also includes a quantized `q_r1_s1` case
 
-*(Run `make load-test` to generate your own results)*
+Treat the local benchmark as a relative signal, not a production claim. A full
+local stack with Ray, Redis, MLflow, Flink, and Locust running on one machine is
+not expected to reproduce a production latency envelope.
 
 ## Services
 
@@ -208,6 +224,7 @@ Two layers update without full retraining:
 ## Notes
 
 - `make serve` is expected to keep running until you stop it with `Ctrl+C`.
+- `make serve-perf` is the recommended path for local latency work.
 - `make serve-docker` only restarts the `ray-head` container from the Docker stack started by `make up`.
 - `make smoke-test` validates serving only; it does not require the Flink job or producer.
 - The full streaming demo needs both `make flink-job` and `make produce`.

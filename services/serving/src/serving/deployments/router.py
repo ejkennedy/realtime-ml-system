@@ -17,12 +17,19 @@ import os
 import random
 import time
 
+import msgspec
 import structlog
 from ray import serve
 from starlette.requests import Request
-from starlette.responses import JSONResponse
 
-from serving.middleware.latency_tracker import shadow_timeout_counter
+from serving.middleware.latency_tracker import (
+    observe_latency,
+    request_parse_latency,
+    response_build_latency,
+    shadow_timeout_counter,
+)
+from serving.responses import ORJSONResponse
+from serving.schemas import TransactionRequest, decode_transaction_request, score_response_to_dict
 
 log = structlog.get_logger()
 
@@ -51,8 +58,12 @@ class FraudRouter:
         # Lazy Kafka producer — initialised on first shadow write
         self._kafka_producer = None
 
-    async def __call__(self, request: Request) -> JSONResponse:
-        payload = await request.json()
+    async def __call__(self, request: Request) -> ORJSONResponse:
+        try:
+            with observe_latency(request_parse_latency(), "router"):
+                payload = decode_transaction_request(await request.body())
+        except msgspec.DecodeError as exc:
+            return ORJSONResponse({"error": f"invalid request payload: {exc}"}, status_code=400)
 
         # Primary path — always awaited
         primary_ref = self._primary.score.remote(payload)
@@ -63,9 +74,10 @@ class FraudRouter:
             asyncio.create_task(self._handle_shadow(shadow_ref, payload))
 
         result = await primary_ref
-        return JSONResponse(result)
+        with observe_latency(response_build_latency(), "router"):
+            return ORJSONResponse(score_response_to_dict(result))
 
-    async def _handle_shadow(self, shadow_ref, payload: dict) -> None:
+    async def _handle_shadow(self, shadow_ref, payload: TransactionRequest) -> None:
         """
         Collect shadow result and publish to Kafka. Never raises — exceptions are swallowed.
         Hard timeout prevents unbounded background task accumulation.
@@ -78,7 +90,7 @@ class FraudRouter:
         except Exception as e:
             log.debug("Shadow handler error", error=str(e))
 
-    async def _publish_shadow_result(self, payload: dict, result: dict) -> None:
+    async def _publish_shadow_result(self, payload: TransactionRequest, result) -> None:
         """Publish shadow comparison record to Kafka (lazy producer init)."""
         if self._kafka_producer is None:
             try:
@@ -90,10 +102,10 @@ class FraudRouter:
                 return
 
         record = json.dumps({
-            "event_id": payload.get("event_id", ""),
-            "shadow_score": result.get("fraud_score"),
-            "shadow_is_fraud": result.get("is_fraud"),
-            "shadow_model_version": result.get("model_version"),
+            "event_id": payload.event_id,
+            "shadow_score": result.fraud_score,
+            "shadow_is_fraud": result.is_fraud,
+            "shadow_model_version": result.model_version,
             "timestamp": time.time(),
         })
         self._kafka_producer.produce(

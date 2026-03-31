@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import gc
+import os
 import queue
 import threading
 import time
@@ -21,6 +22,8 @@ from typing import Iterator
 import numpy as np
 import onnxruntime as ort
 import structlog
+
+from serving.middleware.latency_tracker import onnx_latency, pool_wait_latency
 
 log = structlog.get_logger()
 
@@ -56,7 +59,7 @@ class OnnxSessionPool:
     """
     Thread-safe pool of pre-warmed ONNX Runtime inference sessions.
 
-    Each session uses 2 intra-op threads and sequential execution mode.
+    Each session uses env-configured ORT thread counts and sequential execution mode.
     The pool is populated at startup and returned to idle after each inference.
     """
 
@@ -66,6 +69,9 @@ class OnnxSessionPool:
         self._pool: queue.Queue[ort.InferenceSession] = queue.Queue()
         self._input_name: str = ""
         self._output_name: str = ""
+        self._profiling_enabled = os.environ.get("ONNX_PROFILE_ENABLED", "false") == "true"
+        self._profile_dir = Path(os.environ.get("ONNX_PROFILE_DIR", "./reports/onnx_profiles"))
+        self._session_counter = 0
 
         # Disable Python GC on this thread — managed by background thread below
         gc.disable()
@@ -78,18 +84,25 @@ class OnnxSessionPool:
             model=str(self._model_path),
             pool_size=pool_size,
             input_name=self._input_name,
+            profiling_enabled=self._profiling_enabled,
         )
 
     def _build_pool(self) -> None:
         opts = ort.SessionOptions()
-        opts.intra_op_num_threads = 2
-        opts.inter_op_num_threads = 1
+        opts.intra_op_num_threads = int(os.environ.get("ONNX_INTRA_OP_THREADS", "1"))
+        opts.inter_op_num_threads = int(os.environ.get("ONNX_INTER_OP_THREADS", "1"))
         opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        # Disable telemetry events that add per-session overhead
-        opts.enable_profiling = False
+        opts.enable_profiling = self._profiling_enabled
+        if self._profiling_enabled:
+            self._profile_dir.mkdir(parents=True, exist_ok=True)
 
         for _ in range(self._pool_size):
+            if self._profiling_enabled:
+                opts.profile_file_prefix = str(
+                    self._profile_dir / f"{self._model_path.stem}_session_{self._session_counter}"
+                )
+                self._session_counter += 1
             sess = ort.InferenceSession(
                 str(self._model_path),
                 sess_options=opts,
@@ -119,7 +132,9 @@ class OnnxSessionPool:
 
     @contextlib.contextmanager
     def session(self) -> Iterator[ort.InferenceSession]:
+        wait_start = time.perf_counter()
         sess = self._pool.get(timeout=0.04)  # 40ms timeout → raises queue.Empty if pool exhausted
+        pool_wait_latency().observe(time.perf_counter() - wait_start)
         try:
             yield sess
         finally:
@@ -127,11 +142,12 @@ class OnnxSessionPool:
 
     def predict_proba(self, features: np.ndarray) -> float:
         """Run inference and return fraud probability (class 1)."""
+        if features.dtype != np.float32:
+            features = features.astype(np.float32, copy=False)
         with self.session() as sess:
-            result = sess.run(
-                [self._output_name],
-                {self._input_name: features.astype(np.float32)},
-            )
+            run_start = time.perf_counter()
+            result = sess.run([self._output_name], {self._input_name: features})
+            onnx_latency().observe(time.perf_counter() - run_start)
         # result[0] is shape (batch, 2) for binary classifier — return P(fraud)
         return float(result[0][0][1])
 

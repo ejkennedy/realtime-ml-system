@@ -1,4 +1,4 @@
-.PHONY: help up down logs topics feast-apply feast-materialize train serve serve-perf load-test load-test-local drift-check rollback clean
+.PHONY: help up down logs topics feast-apply feast-materialize train train-quick serve serve-perf serve-perf-quantized load-test load-test-local load-test-stress drift-check rollback clean
 
 COMPOSE = docker compose -f infra/docker/docker-compose.yml
 UV = uv
@@ -63,12 +63,36 @@ serve: ## Start Ray Serve locally (without Docker)
 	$(UV) run --package serving python -m serving.app
 
 serve-perf: ## Start Ray Serve with lighter local perf settings
+	ray stop --force >/dev/null 2>&1 || true
+	mkdir -p $(HOME)/.raytmp
+	RAY_TMPDIR=$(HOME)/.raytmp \
 	SHADOW_ENABLED=false \
 	VERSION_MANAGER_ENABLED=false \
+	ONLINE_UPDATES_ENABLED=false \
+	SERVE_USE_ROUTER=false \
 	SERVE_SCORER_REPLICAS=1 \
 	SERVE_ROUTER_REPLICAS=1 \
 	SERVE_ROUTER_MAX_ONGOING_REQUESTS=32 \
-	ONNX_SESSION_POOL_SIZE=2 \
+	ONNX_SESSION_POOL_SIZE=1 \
+	ONNX_INTRA_OP_THREADS=1 \
+	ONNX_INTER_OP_THREADS=1 \
+	$(UV) run --package serving python -m serving.app
+
+serve-perf-quantized: ## Start Ray Serve in local perf mode using the quantized ONNX model when available
+	ray stop --force >/dev/null 2>&1 || true
+	mkdir -p $(HOME)/.raytmp
+	RAY_TMPDIR=$(HOME)/.raytmp \
+	SHADOW_ENABLED=false \
+	VERSION_MANAGER_ENABLED=false \
+	ONLINE_UPDATES_ENABLED=false \
+	SERVE_USE_ROUTER=false \
+	SERVE_USE_QUANTIZED_MODEL=true \
+	SERVE_SCORER_REPLICAS=1 \
+	SERVE_ROUTER_REPLICAS=1 \
+	SERVE_ROUTER_MAX_ONGOING_REQUESTS=32 \
+	ONNX_SESSION_POOL_SIZE=1 \
+	ONNX_INTRA_OP_THREADS=1 \
+	ONNX_INTER_OP_THREADS=1 \
 	$(UV) run --package serving python -m serving.app
 
 serve-docker: ## Deploy serving via docker-compose ray-head
@@ -86,16 +110,20 @@ flink-job: ## Submit Flink feature pipeline job
 
 # ── Load Testing ──────────────────────────────────────────────────────────────
 
-load-test: ## Run Locust load test (10k req/s target, 5 min)
+load-test: ## Run stress load test (aggressive local saturation profile)
 	mkdir -p reports
+	LOAD_TEST_LABEL=stress \
 	$(UV) run --package load-testing locust \
 		-f services/load-testing/src/load_testing/locustfile.py \
 		--host http://localhost:8000 \
 		--users 200 --spawn-rate 20 --run-time 5m \
 		--headless --html reports/load_test_$$(date +%Y%m%d_%H%M%S).html
 
+load-test-stress: load-test ## Alias for the aggressive stress profile
+
 load-test-local: ## Run lighter local load test profile
 	mkdir -p reports
+	LOAD_TEST_LABEL=local \
 	LOAD_TEST_STAGE1_DURATION_S=20 \
 	LOAD_TEST_STAGE1_USERS=10 \
 	LOAD_TEST_STAGE1_SPAWN_RATE=2 \

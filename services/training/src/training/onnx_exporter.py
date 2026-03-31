@@ -20,8 +20,10 @@ import numpy as np
 import onnxruntime as ort
 import structlog
 import xgboost as xgb
+from onnxruntime.quantization import QuantType, quantize_dynamic
 from onnxmltools import convert_xgboost
 from onnxmltools.convert.common.data_types import FloatTensorType
+from pathlib import Path
 
 log = structlog.get_logger()
 
@@ -31,6 +33,7 @@ def export_xgboost_to_onnx(
     output_path: str,
     n_features: int,
     opset_version: int = 15,
+    quantized_output_path: str | None = None,
 ) -> None:
     """
     Convert XGBoost classifier to ONNX format.
@@ -55,6 +58,9 @@ def export_xgboost_to_onnx(
 
     _validate_onnx(model, output_path, n_features)
     log.info("ONNX export validated", path=output_path, n_features=n_features)
+
+    if quantized_output_path:
+        _export_quantized_onnx(model, output_path, quantized_output_path, n_features)
 
 
 def _validate_onnx(
@@ -90,3 +96,32 @@ def _validate_onnx(
         )
 
     log.info("ONNX validation passed", max_diff=f"{max_diff:.8f}")
+
+
+def _export_quantized_onnx(
+    original_model: xgb.XGBClassifier,
+    onnx_path: str,
+    quantized_output_path: str,
+    n_features: int,
+) -> None:
+    try:
+        quantize_dynamic(
+            model_input=onnx_path,
+            model_output=quantized_output_path,
+            weight_type=QuantType.QUInt8,
+        )
+        _validate_onnx(
+            original_model,
+            quantized_output_path,
+            n_features,
+            tolerance=2e-2,
+        )
+        fp32_size = onnx_path and Path(onnx_path).stat().st_size
+        int8_size = Path(quantized_output_path).stat().st_size
+        log.info(
+            "Quantized ONNX export validated",
+            path=quantized_output_path,
+            size_reduction_pct=round((1 - (int8_size / fp32_size)) * 100, 2) if fp32_size else 0.0,
+        )
+    except Exception as exc:
+        log.warning("Quantized ONNX export skipped", error=str(exc), path=quantized_output_path)

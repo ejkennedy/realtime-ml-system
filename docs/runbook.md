@@ -47,6 +47,24 @@ make smoke-test    # sanity check
 make down          # stop everything
 ```
 
+For latency-focused work, prefer:
+
+```bash
+make serve-perf
+make load-test-local
+```
+
+This path disables shadow traffic, version-manager polling, and online-update
+Redis writes, binds HTTP directly to the scorer, and uses a short dedicated Ray temp
+directory to avoid `/tmp/ray` spill warnings on space-constrained machines.
+
+To test the quantized model path locally:
+
+```bash
+make serve-perf-quantized
+make load-test-local
+```
+
 ## Training
 
 ### Full Training Run
@@ -77,8 +95,9 @@ uv run --package training python -m training.pipeline --iceberg
 3. Final model trained on 90% of data, validated on 10%
 4. Metrics logged: AUC, AUCPR, precision, recall, F1
 5. Model exported to ONNX via onnxmltools, validated against original predictions
-6. Registered in MLflow under `fraud-detector` model name with `staging` alias
-7. Version manager picks up the `staging` alias and loads into `ShadowScorer`
+6. Optional int8 quantized ONNX variant emitted and validated when the exported graph supports ORT quantization
+7. Registered in MLflow under `fraud-detector` model name with `staging` alias
+8. Version manager picks up the `staging` alias and loads into `ShadowScorer`
 
 `make train` finishes when the model is logged and registered. The later
 30-minute shadow window belongs to serving-side promotion logic and does not
@@ -172,37 +191,62 @@ Open http://localhost:3000 (admin/admin)
 If p95 exceeds 50ms:
 
 1. Check session pool wait time in Grafana (`fraud_session_pool_wait_seconds`)
-   - If high: pool is exhausted → reduce `max_concurrent_queries` or increase pool size
-2. Check Redis latency (`fraud_redis_duration_seconds`)
-   - If high: Redis is slow → check `redis-cli --latency-history`
-3. Check ONNX inference time (`fraud_onnx_duration_seconds`)
-   - If high: model too large → consider pruning or quantisation
-4. Check GC pressure:
+   - If high: the scorer is queueing on ONNX sessions → reduce concurrency or retune pool size
+2. Check ONNX inference time (`fraud_onnx_duration_seconds`)
+   - If high: model runtime or ORT thread count is the bottleneck
+3. Check feature-prep and request-parse histograms
+   - If high: the hot path is paying for JSON shape / timestamp parsing overhead
+   - The fast path now accepts `hour_of_day`, `day_of_week`, and `timestamp_unix_ms`
+4. Check whether online updates are enabled
+   - For benchmarks, keep `ONLINE_UPDATES_ENABLED=false`
+5. If you need deeper model-runtime evidence, enable ORT profiling:
+   ```bash
+   ONNX_PROFILE_ENABLED=true make serve-perf
+   ```
+   Profiles will be written under `reports/onnx_profiles/`
+6. Check GC pressure:
    ```bash
    docker stats ray-head  # watch memory usage patterns
    ```
-5. Run load test to profile at different concurrency levels:
+7. Run load test to profile at different concurrency levels:
    ```bash
-   make load-test
-   # Check reports/load_test_*.html for latency distribution plots
+   make load-test-local
+   # Compare reports/load_test_summary_*.md across configs
    ```
 
 ## Load Testing
 
-### Standard Load Test (10k req/s, 5 min)
+### Local Baseline Load Test
 
 ```bash
-make load-test
+make serve-perf
+make load-test-local
 ```
 
-Generates `reports/load_test_TIMESTAMP.html` with:
+Generates `reports/load_test_local_TIMESTAMP.html` with:
 - p50/p95/p99/p99.9 latency
 - Requests per second
 - Error rate
 - Latency distribution histogram + CDF plot
 
-The load test also writes a latency distribution PNG into `reports/` before exiting.
-It also writes a compact Markdown summary to `reports/load_test_summary_TIMESTAMP.md`.
+The load test also writes a latency distribution PNG into `reports/` before exiting
+and a compact Markdown summary to `reports/load_test_summary_TIMESTAMP.md`.
+
+### Stress Load Test
+
+```bash
+make load-test
+```
+
+Use this as a saturation / stress run, not as the default laptop benchmark.
+
+If the latest training run produced `model.int8.onnx`, you can compare the
+quantized path with:
+
+```bash
+make serve-perf-quantized
+make load-test-local
+```
 
 To fail the run when successful responses exceed a latency threshold, set
 `LOAD_TEST_LATENCY_FAIL_THRESHOLD_MS`, for example:
@@ -230,20 +274,19 @@ make load-test-ui
 
 ### Interpreting Load Test Results
 
-**Healthy system** at 10k req/s should show:
-- p50 < 15ms
-- p95 < 50ms (SLA)
-- p99 < 80ms
-- Error rate < 0.1%
+**Interpretation guide:**
+- `make load-test-local` is for comparing code and config changes on one machine
+- `make load-test` is expected to saturate a laptop and is useful for tail-latency stress only
+- Sub-50ms p95 is the architecture target, not a guaranteed local-laptop outcome
 
 **Common failure modes:**
 
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
-| p95 spike at ~50ms | Pool exhaustion | Increase `ONNX_SESSION_POOL_SIZE` |
-| p99 spikes every ~30s | GC pause | Already mitigated; check memory leak |
-| Errors at high QPS | Ray actor overloaded | Add replicas (`ray.serve.run` with `num_replicas`) |
-| High variance in latency | NUMA effects on multi-socket | Set `intra_op_num_threads=1` in ONNX session opts |
+| High pool wait time | Too much concurrency for available CPU | Reduce replicas / pool size or use direct perf mode |
+| High ONNX time with low pool wait | ORT thread count or model runtime | Set `ONNX_INTRA_OP_THREADS=1` and retest |
+| High feature-prep time | Request parsing / timestamp parsing overhead | Send `hour_of_day`, `day_of_week`, `timestamp_unix_ms` |
+| High variance under local stress | Full-stack machine saturation | Use `make load-test-local` for baseline, `make load-test` for stress |
 
 ## Feature Store Operations
 

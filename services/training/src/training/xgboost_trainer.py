@@ -112,8 +112,10 @@ class XGBoostTrainer:
             log.info("Validation metrics", **{k: round(v, 4) for k, v in val_metrics.items()})
 
             # Export to ONNX
-            onnx_path = self._export_onnx(model, run.info.run_id)
+            onnx_path, quantized_onnx_path = self._export_onnx(model, run.info.run_id)
             mlflow.log_artifact(str(onnx_path), artifact_path="model")
+            if quantized_onnx_path is not None and quantized_onnx_path.exists():
+                mlflow.log_artifact(str(quantized_onnx_path), artifact_path="model")
 
             # Log sklearn-style model for MLflow model registry
             mlflow.xgboost.log_model(
@@ -147,19 +149,28 @@ class XGBoostTrainer:
             "aucpr_mean": round(np.mean(aucprs), 4),
         }
 
-    def _export_onnx(self, model: xgb.XGBClassifier, run_id: str) -> Path:
+    def _export_onnx(self, model: xgb.XGBClassifier, run_id: str) -> tuple[Path, Path | None]:
         from training.onnx_exporter import export_xgboost_to_onnx
         onnx_path = self._output_dir / f"fraud_detector/{run_id}/model.onnx"
+        quantized_onnx_path = onnx_path.parent / "model.int8.onnx"
         onnx_path.parent.mkdir(parents=True, exist_ok=True)
 
-        export_xgboost_to_onnx(model, str(onnx_path), len(FEATURE_COLS))
+        export_xgboost_to_onnx(
+            model,
+            str(onnx_path),
+            len(FEATURE_COLS),
+            quantized_output_path=str(quantized_onnx_path),
+        )
 
         # Also update the "latest" symlink
         latest_dir = self._output_dir / "fraud_detector/latest"
         latest_dir.mkdir(parents=True, exist_ok=True)
         latest_path = latest_dir / "model.onnx"
+        quantized_latest_path = latest_dir / "model.int8.onnx"
         import shutil
         shutil.copy2(onnx_path, latest_path)
+        if quantized_onnx_path.exists():
+            shutil.copy2(quantized_onnx_path, quantized_latest_path)
 
         log.info("ONNX model exported", path=str(onnx_path))
-        return onnx_path
+        return onnx_path, quantized_onnx_path if quantized_onnx_path.exists() else None

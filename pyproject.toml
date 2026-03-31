@@ -27,6 +27,8 @@ dependencies = [
     "redis>=4.2.2",
     "pydantic>=2.7",
     "matplotlib>=3.9",
+    "msgspec>=0.18",
+    "orjson>=3.10",
 ]
 
 [tool.uv]

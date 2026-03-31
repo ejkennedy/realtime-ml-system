@@ -7,23 +7,40 @@ max_concurrent_queries must equal OnnxSessionPool size to prevent queue buildup.
 
 from __future__ import annotations
 
+import json
 import os
+import queue
+import random
+import threading
 import time
 from datetime import datetime, timezone
 
+import msgspec
 import numpy as np
 import redis
 import structlog
 from ray import serve
 from starlette.requests import Request
-from starlette.responses import JSONResponse
 
 from serving.middleware.latency_tracker import (
+    feature_prep_latency,
     fraud_rate_gauge,
     fraud_predictions,
+    observe_latency,
+    online_update_dropped,
+    online_update_enqueued,
+    request_parse_latency,
+    response_build_latency,
     track_inference,
 )
-from serving.models.onnx_runner import FEATURE_NAMES, NUM_FEATURES, OnnxSessionPool
+from serving.models.onnx_runner import NUM_FEATURES, OnnxSessionPool
+from serving.responses import ORJSONResponse
+from serving.schemas import (
+    ScoreResponse,
+    TransactionRequest,
+    decode_transaction_request,
+    score_response_to_dict,
+)
 
 log = structlog.get_logger()
 
@@ -31,6 +48,11 @@ POOL_SIZE = int(os.environ.get("ONNX_SESSION_POOL_SIZE", 4))
 SCORER_REPLICAS = int(os.environ.get("SERVE_SCORER_REPLICAS", 2))
 MODEL_PATH = os.environ.get("ONNX_MODEL_PATH", "/models/fraud_detector/latest/model.onnx")
 FRAUD_THRESHOLD = float(os.environ.get("FRAUD_THRESHOLD", 0.5))
+ONLINE_UPDATES_ENABLED = os.environ.get("ONLINE_UPDATES_ENABLED", "true") == "true"
+ONLINE_UPDATE_SAMPLE_RATE = float(os.environ.get("ONLINE_UPDATE_SAMPLE_RATE", "1.0"))
+ONLINE_UPDATE_QUEUE_MAXSIZE = int(os.environ.get("ONLINE_UPDATE_QUEUE_MAXSIZE", "2048"))
+ONLINE_UPDATE_BATCH_SIZE = int(os.environ.get("ONLINE_UPDATE_BATCH_SIZE", "64"))
+ONLINE_UPDATE_FLUSH_INTERVAL_S = float(os.environ.get("ONLINE_UPDATE_FLUSH_INTERVAL_S", "0.25"))
 
 MERCHANT_CATEGORY_MAP = {
     "retail": 0, "food": 1, "travel": 2, "entertainment": 3,
@@ -51,12 +73,23 @@ class FraudScorer:
         self._pool = OnnxSessionPool(MODEL_PATH, pool_size=POOL_SIZE)
         self._model_version = self._get_model_version()
 
-        # Redis for online learning state
-        self._redis = redis.Redis(
-            host=os.environ.get("REDIS_HOST", "localhost"),
-            port=int(os.environ.get("REDIS_PORT", 6379)),
-            socket_timeout=0.01,   # 10ms timeout — never block inference on Redis
-        )
+        self._online_updates_enabled = ONLINE_UPDATES_ENABLED
+        self._online_update_sample_rate = ONLINE_UPDATE_SAMPLE_RATE
+        self._online_update_queue: queue.Queue[tuple[np.ndarray, int, float]] | None = None
+        self._redis: redis.Redis | None = None
+        if self._online_updates_enabled:
+            self._online_update_queue = queue.Queue(maxsize=ONLINE_UPDATE_QUEUE_MAXSIZE)
+            self._redis = redis.Redis(
+                host=os.environ.get("REDIS_HOST", "localhost"),
+                port=int(os.environ.get("REDIS_PORT", 6379)),
+                socket_timeout=0.05,
+            )
+            self._online_update_thread = threading.Thread(
+                target=self._online_update_worker,
+                daemon=True,
+                name="fraud-online-update-worker",
+            )
+            self._online_update_thread.start()
 
         # Pre-allocate input buffer — reused per request, avoids GC pressure
         self._input_buffer = np.zeros((1, NUM_FEATURES), dtype=np.float32)
@@ -67,96 +100,159 @@ class FraudScorer:
 
         log.info("FraudScorer ready", model_version=self._model_version)
 
-    async def __call__(self, request: Request) -> JSONResponse:
-        payload = await request.json()
-        return await self.score(payload)
+    async def __call__(self, request: Request) -> ORJSONResponse:
+        try:
+            with observe_latency(request_parse_latency(), "primary"):
+                payload = decode_transaction_request(await request.body())
+        except msgspec.DecodeError as exc:
+            return ORJSONResponse({"error": f"invalid request payload: {exc}"}, status_code=400)
 
-    async def score(self, payload: dict) -> dict:
+        response = await self.score(payload)
+        with observe_latency(response_build_latency(), "primary_http"):
+            return ORJSONResponse(score_response_to_dict(response))
+
+    async def score(self, payload: TransactionRequest) -> ScoreResponse:
         with track_inference(self._model_version, path="primary"):
             t0 = time.perf_counter()
 
-            features = self._prepare_features(payload)
+            with observe_latency(feature_prep_latency(), "primary"):
+                features = self._prepare_features(payload)
             fraud_score = self._pool.predict_proba(features)
             is_fraud = fraud_score >= FRAUD_THRESHOLD
 
+            self._enqueue_online_update(is_fraud)
+
             elapsed_ms = (time.perf_counter() - t0) * 1000
 
-            # Update EMA fraud rate gauge
             self._ema_rate = self._ema_alpha * float(is_fraud) + (1 - self._ema_alpha) * self._ema_rate
             fraud_rate_gauge().set(self._ema_rate)
 
             if is_fraud:
                 fraud_predictions().labels(model_version=self._model_version).inc()
 
-            result = {
-                "event_id": payload.get("event_id", ""),
-                "fraud_score": round(fraud_score, 6),
-                "is_fraud": is_fraud,
-                "model_version": self._model_version,
-                "inference_latency_ms": round(elapsed_ms, 2),
-            }
+            return ScoreResponse(
+                event_id=payload.event_id,
+                fraud_score=round(fraud_score, 6),
+                is_fraud=is_fraud,
+                model_version=self._model_version,
+                inference_latency_ms=round(elapsed_ms, 2),
+            )
 
-            # Non-blocking online learning update (fire and forget via Redis queue)
-            self._queue_online_update(payload, is_fraud)
-
-            return result
-
-    def _prepare_features(self, payload: dict) -> np.ndarray:
+    def _prepare_features(self, payload: TransactionRequest) -> np.ndarray:
         """Fill the pre-allocated input buffer with feature values."""
         buf = self._input_buffer  # reuse allocation
-        v = payload
-        vel = v.get("velocity", {})
+        vel = payload.velocity
 
-        amount = float(v.get("amount", 0))
-        ts = v.get("timestamp", "")
-        try:
-            dt = datetime.fromisoformat(ts)
-        except (ValueError, TypeError):
-            dt = datetime.now(timezone.utc)
+        amount = float(payload.amount)
+        hour_of_day, day_of_week = self._extract_calendar_features(payload)
 
-        card_avg = float(v.get("card_avg_spend_30d", 1)) or 1.0
-        merchant_avg = float(v.get("merchant_avg_amount", 1)) or 1.0
+        card_avg = float(payload.card_avg_spend_30d) or 1.0
+        merchant_avg = float(payload.merchant_avg_amount) or 1.0
 
         buf[0, 0] = amount
-        buf[0, 1] = dt.hour
-        buf[0, 2] = dt.weekday()
-        buf[0, 3] = MERCHANT_CATEGORY_MAP.get(v.get("merchant_category", "other"), 8)
-        buf[0, 4] = POS_TYPE_MAP.get(v.get("pos_type", "chip"), 0)
-        buf[0, 5] = float(vel.get("tx_count_1m", 0))
-        buf[0, 6] = float(vel.get("tx_count_5m", 0))
-        buf[0, 7] = float(vel.get("tx_count_1h", 0))
-        buf[0, 8] = float(vel.get("tx_count_24h", 0))
-        buf[0, 9] = float(vel.get("amount_sum_1h", 0))
-        buf[0, 10] = float(vel.get("amount_avg_1h", 0))
-        buf[0, 11] = float(vel.get("amount_max_1h", 0))
-        buf[0, 12] = float(vel.get("amount_sum_24h", 0))
-        buf[0, 13] = float(vel.get("distinct_merchants_1h", 0))
-        buf[0, 14] = float(vel.get("distinct_countries_1h", 0))
-        buf[0, 15] = float(v.get("card_risk_score", 0))
-        buf[0, 16] = float(v.get("merchant_fraud_rate_30d", 0))
-        buf[0, 17] = float(v.get("merchant_avg_amount", 0))
-        buf[0, 18] = float(v.get("card_avg_spend_30d", 0))
+        buf[0, 1] = hour_of_day
+        buf[0, 2] = day_of_week
+        buf[0, 3] = MERCHANT_CATEGORY_MAP.get(payload.merchant_category, 8)
+        buf[0, 4] = POS_TYPE_MAP.get(payload.pos_type, 0)
+        buf[0, 5] = self._feature_value(payload, vel, "tx_count_1m")
+        buf[0, 6] = self._feature_value(payload, vel, "tx_count_5m")
+        buf[0, 7] = self._feature_value(payload, vel, "tx_count_1h")
+        buf[0, 8] = self._feature_value(payload, vel, "tx_count_24h")
+        buf[0, 9] = self._feature_value(payload, vel, "amount_sum_1h")
+        buf[0, 10] = self._feature_value(payload, vel, "amount_avg_1h")
+        buf[0, 11] = self._feature_value(payload, vel, "amount_max_1h")
+        buf[0, 12] = self._feature_value(payload, vel, "amount_sum_24h")
+        buf[0, 13] = self._feature_value(payload, vel, "distinct_merchants_1h")
+        buf[0, 14] = self._feature_value(payload, vel, "distinct_countries_1h")
+        buf[0, 15] = float(payload.card_risk_score)
+        buf[0, 16] = float(payload.merchant_fraud_rate_30d)
+        buf[0, 17] = float(payload.merchant_avg_amount)
+        buf[0, 18] = float(payload.card_avg_spend_30d)
         buf[0, 19] = amount / card_avg
         buf[0, 20] = amount / merchant_avg
 
         return buf
 
-    def _queue_online_update(self, payload: dict, label: bool) -> None:
-        """Push a lightweight update record to Redis for the online learning worker."""
+    @staticmethod
+    def _feature_value(payload: TransactionRequest, velocity: object, key: str) -> float:
+        if velocity is not None:
+            value = getattr(velocity, key)
+            if value:
+                return float(value)
+        return float(getattr(payload, f"velocity_{key}"))
+
+    @staticmethod
+    def _extract_calendar_features(payload: TransactionRequest) -> tuple[int, int]:
+        if payload.hour_of_day is not None and payload.day_of_week is not None:
+            return int(payload.hour_of_day), int(payload.day_of_week)
+
+        unix_ms = payload.timestamp_unix_ms
+        if unix_ms is None:
+            unix_ms = payload.timestamp_epoch_ms
+        if unix_ms is not None:
+            dt = datetime.fromtimestamp(float(unix_ms) / 1000, tz=timezone.utc)
+            return dt.hour, dt.weekday()
+
+        ts = payload.timestamp or ""
         try:
-            import json
-            self._redis.lpush(
-                "online_update_queue",
-                json.dumps({
-                    "features": self._input_buffer[0].tolist(),
-                    "label": int(label),
-                    "timestamp": time.time(),
-                }),
+            dt = datetime.fromisoformat(ts)
+            return dt.hour, dt.weekday()
+        except (ValueError, TypeError):
+            dt = datetime.now(timezone.utc)
+            return dt.hour, dt.weekday()
+
+    def _enqueue_online_update(self, label: bool) -> None:
+        if not self._online_updates_enabled or self._online_update_queue is None:
+            return
+        if self._online_update_sample_rate < 1.0 and random.random() > self._online_update_sample_rate:
+            online_update_dropped().labels(reason="sampled_out").inc()
+            return
+        try:
+            self._online_update_queue.put_nowait(
+                (
+                    self._input_buffer[0].copy(),
+                    int(label),
+                    time.time(),
+                )
             )
-            # Cap queue length — older examples are less relevant
-            self._redis.ltrim("online_update_queue", 0, 9999)
-        except Exception:
-            pass  # never fail inference due to online learning queue issues
+            online_update_enqueued().inc()
+        except queue.Full:
+            online_update_dropped().labels(reason="queue_full").inc()
+
+    def _online_update_worker(self) -> None:
+        assert self._online_update_queue is not None
+        assert self._redis is not None
+        while True:
+            batch: list[tuple[np.ndarray, int, float]] = []
+            try:
+                item = self._online_update_queue.get(timeout=ONLINE_UPDATE_FLUSH_INTERVAL_S)
+                batch.append(item)
+            except queue.Empty:
+                continue
+
+            while len(batch) < ONLINE_UPDATE_BATCH_SIZE:
+                try:
+                    batch.append(self._online_update_queue.get_nowait())
+                except queue.Empty:
+                    break
+
+            try:
+                pipe = self._redis.pipeline(transaction=False)
+                for features, label, ts in batch:
+                    pipe.lpush(
+                        "online_update_queue",
+                        json.dumps(
+                            {
+                                "features": features.tolist(),
+                                "label": label,
+                                "timestamp": ts,
+                            }
+                        ),
+                    )
+                pipe.ltrim("online_update_queue", 0, 9999)
+                pipe.execute()
+            except Exception:
+                online_update_dropped().labels(reason="redis_error").inc()
 
     def _get_model_version(self) -> str:
         try:
